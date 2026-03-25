@@ -187,6 +187,18 @@
         <activity
             android:name=".xc.MyCenterActivity"
             android:exported="false" />
+        <activity
+            android:name=".xc.GameRoomWaitActivity"
+            android:exported="false" />
+        <activity
+            android:name=".xc.GameMainActivity"
+            android:exported="false" />
+        <activity
+            android:name=".xc.GameJoinActivity"
+            android:exported="false" />
+        <activity
+            android:name=".xc.GameBattleActivity"
+            android:exported="false" />
 
         <!-- FileProvider for camera photos -->
         <provider

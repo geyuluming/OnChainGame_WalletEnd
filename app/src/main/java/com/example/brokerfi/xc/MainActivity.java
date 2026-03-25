@@ -77,6 +77,9 @@ public class MainActivity extends AppCompatActivity {
     public  Spinner accountSpinner;
 //    private TextView balanceTextView;
 
+    // 新增：游戏入口图标
+    private ImageView gameEntry;
+
     @Override
     protected void onDestroy() {
         super.onDestroy();
@@ -442,6 +445,8 @@ public class MainActivity extends AppCompatActivity {
         medalSystem = findViewById(R.id.medalSystem);
         receive = findViewById(R.id.receiveicon);
         accounts = findViewById(R.id.accounts);
+        // 新增：绑定游戏入口图标
+        gameEntry = findViewById(R.id.game_entry);
         //ImageView convertBtn = findViewById(R.id.convertBtn);
     }
 
@@ -547,7 +552,21 @@ public class MainActivity extends AppCompatActivity {
             intent.setClass(MainActivity.this,MedalRankingActivity.class);
             startActivity(intent);
         });
-        
+
+        // 新增：游戏入口点击事件（和其他按钮保持相同的旧账户判断逻辑）
+        gameEntry.setOnClickListener(view -> {
+            // 旧账户判断（和Send/Swap等功能保持一致）
+            if (!SecurityUtil.isNewPrivateKeyFormat(StorageUtil.getCurrentPrivatekey(MainActivity.this))) {
+                Toast.makeText(MainActivity.this, "Chain Game is no longer available for old accounts.", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            // 跳转到游戏主界面（你需要创建 GameActivity 类）
+            Intent intent = new Intent();
+            intent.setClass(MainActivity.this, GameMainActivity.class);
+            startActivity(intent);
+        });
+
         //findViewById(R.id.convertBtn).setOnClickListener(view -> {
             //Intent intent = new Intent();
             //intent.setClass(MainActivity.this,ConvertActivity.class);

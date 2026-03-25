@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="加入链上卡牌游戏"
+        android:textSize="22sp"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:layout_marginBottom="24dp"/>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="12dp">
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="游戏ID："
+            android:textSize="16sp"
+            android:layout_gravity="center_vertical"/>
+        <EditText
+            android:id="@+id/et_game_id"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:hint="请输入游戏ID"
+            android:inputType="number"
+            android:paddingHorizontal="16dp"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="24dp">
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="质押BKC数量："
+            android:textSize="16sp"
+            android:layout_gravity="center_vertical"/>
+        <EditText
+            android:id="@+id/et_stake_amount"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:hint="10"
+            android:inputType="numberDecimal"
+            android:paddingHorizontal="16dp"/>
+    </LinearLayout>
+
+    <Button
+        android:id="@+id/btn_join"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:text="加入游戏"
+        android:textSize="18sp"
+        android:background="#2196F3"
+        android:textColor="#FFFFFF"/>
+
+</LinearLayout>

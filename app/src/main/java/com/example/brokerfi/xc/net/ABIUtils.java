@@ -440,4 +440,61 @@ public class ABIUtils {
         }
         return result;
     }
+
+
+    public static String encodeCreateGameRoom(
+            int minPlayers, int maxPlayers, BigInteger minStake,
+            BigInteger maxStake, BigInteger[] cardCounts, int jokerCount
+    ) {
+        // 函数选择器（createGameRoom的ABI选择器，从Remix导出）
+        String SELECTOR = "0xda283b6e";
+
+        StringBuilder data = new StringBuilder(SELECTOR);
+        // 编码参数：minPlayers（uint256）
+        data.append(padLeft(BigInteger.valueOf(minPlayers).toString(16), 64));
+        // 编码maxPlayers（uint256）
+        data.append(padLeft(BigInteger.valueOf(maxPlayers).toString(16), 64));
+        // 编码minStake（uint256）
+        data.append(padLeft(minStake.toString(16), 64));
+        // 编码maxStake（uint256）
+        data.append(padLeft(maxStake.toString(16), 64));
+        // 编码cardCounts（uint256[10]）
+        for (BigInteger count : cardCounts) {
+            data.append(padLeft(count.toString(16), 64));
+        }
+        // 编码jokerCount（uint256）
+        data.append(padLeft(BigInteger.valueOf(jokerCount).toString(16), 64));
+
+        return data.toString();
+    }
+
+    public static String encodeGetGameRoom(BigInteger gameId) {
+        // 函数选择器：getGameRoom(uint256) 的 Keccak-256 哈希前 4 字节
+        // 可从 Remix IDE 合约编译界面的 "ABI" 或 "Bytecode" 中复制
+        String selector = "0xbcdafed1"; // 替换为实际的函数选择器，例如 "0x6d4ce63c"
+
+        // 编码参数：gameId 为 uint256，需填充为 64 位十六进制字符串
+        String param = padLeft(gameId.toString(16), 64);
+        return selector + param;
+    }
+
+    public static String decodeAddress(String result) {
+        // 结果格式：0x + 24个0 + 40位地址字符
+        // 截取最后 40 位，拼接 0x 前缀
+        if (result.startsWith("0x")) {
+            result = result.substring(2);
+        }
+        // 取最后 40 个字符（地址长度为 20 字节 = 40 个十六进制字符）
+        String addr = result.substring(result.length() - 40);
+        return "0x" + addr;
+    }
+
+    // 在 ABIUtils.java 中添加
+    public static String encodeJoinGame() {
+        // 函数选择器：joinGame() 的 Keccak-256 哈希前 4 字节
+        // 从 Remix IDE 合约编译界面的 "ABI" 或 "Bytecode" 中复制
+        String selector = "0xd4f77b1c"; // 替换为实际的函数选择器，例如 "0x7e2f2f2"
+        return selector; // 无参函数仅需函数选择器
+    }
+
 }
