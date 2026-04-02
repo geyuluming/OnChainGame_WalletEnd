@@ -107,8 +107,15 @@ public class GameJoinActivity extends AppCompatActivity {
                             return;
                         }
 
+                        String rawResult = response.getString("result");
+                        if (rawResult == null || rawResult.equals("0x") || rawResult.equals("0x0")) {
+                            Log.e(TAG, "❌ 返回为空/过短：" + rawResult);
+                            runOnUiThread(() -> Toast.makeText(GameJoinActivity.this, "游戏不存在或节点未同步", Toast.LENGTH_SHORT).show());
+                            return;
+                        }
+
                         // 解析返回的房间地址
-                        String roomAddress = ABIUtils.decodeAddress(response.getString("result"));
+                        String roomAddress = ABIUtils.decodeAddress(rawResult);
                         Log.i(TAG, "✅ 解析房间地址：" + roomAddress);
 
                         if (roomAddress.equals("0x0000000000000000000000000000000000000000")) {

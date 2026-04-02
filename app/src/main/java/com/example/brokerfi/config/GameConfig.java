@@ -6,7 +6,7 @@ public class GameConfig {
 
     // 部署后的合约地址（替换为实际部署地址）
     public static final String STAKING_VAULT_ADDRESS = "0x69e3c96Df4Fa9567B1b7d83749C37e6FFd4B5Be6";
-    public static final String GAME_FACTORY_ADDRESS = "0x55Adb6E97232576d0D55Af3d441a02b915eB6772";
+    public static final String GAME_FACTORY_ADDRESS = "0x986137E257593E2E574147d77873618D53CDd73A";
 
     // 合约ABI
     public static final String GAME_FACTORY_ABI = "[\n" +
