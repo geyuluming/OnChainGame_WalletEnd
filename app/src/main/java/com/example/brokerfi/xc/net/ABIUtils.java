@@ -3,10 +3,10 @@ package com.example.brokerfi.xc.net;
 import android.util.Log;
 
 import org.web3j.utils.Numeric;
+import org.web3j.crypto.Hash;
 
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.List;
@@ -479,11 +479,11 @@ public class ABIUtils {
     }
 
     public static String decodeAddress(String result) {
-        // 结果格式：0x + 24个0 + 40位地址字符
-        // 截取最后 40 位，拼接 0x 前缀
-        if (result.startsWith("0x")) {
-            result = result.substring(2);
-        }
+        // eth_call 可能返回 "0x" / "0x0" / 非32字节长度，这里做健壮处理，避免崩溃
+        if (result == null) return "0x0000000000000000000000000000000000000000";
+        if (result.startsWith("0x")) result = result.substring(2);
+        // 空/太短直接视为零地址
+        if (result.length() < 40) return "0x0000000000000000000000000000000000000000";
         // 取最后 40 个字符（地址长度为 20 字节 = 40 个十六进制字符）
         String addr = result.substring(result.length() - 40);
         return "0x" + addr;
@@ -687,15 +687,10 @@ public class ABIUtils {
     }
 
     private static String keccak256Hex(String text) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA3-256");
-            byte[] hash = digest.digest(text.getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder();
-            for (byte b : hash) sb.append(String.format("%02x", b));
-            return sb.toString();
-        } catch (Exception e) {
-            throw new RuntimeException("keccak256 failed: " + e.getMessage(), e);
-        }
+        // IMPORTANT: Ethereum uses Keccak-256 (not standardized SHA3-256).
+        // Use web3j's Keccak implementation for Android compatibility.
+        String hex = Hash.sha3String(text); // returns 0x-prefixed hex
+        return cleanHex(hex);
     }
 
     private static String cleanHex(String s) {
