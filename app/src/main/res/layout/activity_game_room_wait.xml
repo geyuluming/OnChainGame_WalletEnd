@@ -48,6 +48,30 @@
         android:layout_marginBottom="10dp"/>
 
     <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="玩家与质押（StakingVault）"
+        android:textStyle="bold"
+        android:layout_marginBottom="6dp"/>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true"
+        android:layout_marginBottom="12dp">
+
+        <TextView
+            android:id="@+id/tv_player_list"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="加载中..."
+            android:textSize="14sp"
+            android:lineSpacingExtra="4dp"
+            android:fontFamily="monospace"/>
+    </ScrollView>
+
+    <TextView
         android:id="@+id/tv_wait_tip"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

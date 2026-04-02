@@ -6,7 +6,10 @@ import org.web3j.utils.Numeric;
 
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.List;
 
 public class ABIUtils {
 
@@ -447,7 +450,7 @@ public class ABIUtils {
             BigInteger maxStake, BigInteger[] cardCounts, int jokerCount
     ) {
         // 函数选择器（createGameRoom的ABI选择器，从Remix导出）
-        String SELECTOR = "0xda283b6e";
+        String SELECTOR = "0x1ce07d51";
 
         StringBuilder data = new StringBuilder(SELECTOR);
         // 编码参数：minPlayers（uint256）
@@ -468,12 +471,9 @@ public class ABIUtils {
         return data.toString();
     }
 
-    public static String encodeGetGameRoom(BigInteger gameId) {
-        // 函数选择器：getGameRoom(uint256) 的 Keccak-256 哈希前 4 字节
-        // 可从 Remix IDE 合约编译界面的 "ABI" 或 "Bytecode" 中复制
-        String selector = "0xbcdafed1"; // 替换为实际的函数选择器，例如 "0x6d4ce63c"
-
-        // 编码参数：gameId 为 uint256，需填充为 64 位十六进制字符串
+    // 调用 gameRooms(uint256) → 返回地址
+    public static String encodeGameRooms(BigInteger gameId) {
+        String selector = "0x426c4641"; // gameRooms(uint256)
         String param = padLeft(gameId.toString(16), 64);
         return selector + param;
     }
@@ -496,5 +496,216 @@ public class ABIUtils {
         String selector = "0xd4f77b1c"; // 替换为实际的函数选择器，例如 "0x7e2f2f2"
         return selector; // 无参函数仅需函数选择器
     }
+
+    public static String encodeGameState() {
+        return "0xd1f9c24d"; // gameState()
+    }
+
+    public static String encodeConfig() {
+        return "0x79502c55"; // config()
+    }
+
+    // 根据索引获取玩家地址 players(uint256)
+    public static String encodeGetPlayerByIndex(int index) {
+        String selector = "0xf71d96cb";
+        String param = padLeft(Integer.toHexString(index), 64);
+        return selector + param;
+    }
+
+    // 获取玩家信息（含质押金额）playerData(address)
+    public static String encodePlayerData(String addr) {
+        String selector = "0x424aeded";
+        String param = padLeft(addr.substring(2), 64);
+        return selector + param;
+    }
+
+    // ====================== 工具 ======================
+
+    public static String decodeStakeAmount(String hex) {
+        // playerData 返回第 2 个参数是 stakeAmount（uint256）
+        // 结构：addr(20)+stake(32)+isActive(32)+handCards(32*10)+joker(32)
+        if (hex.length() < 130) return "0";
+        return hex.substring(66, 130);
+    }
+
+    // ====================== Game: Encode ======================
+
+    public static String encodeCreateGameRoomV2(
+            BigInteger minPlayers,
+            BigInteger maxPlayers,
+            BigInteger minStake,
+            BigInteger maxStake,
+            BigInteger jokerCount,
+            BigInteger[] cardCounts
+    ) {
+        String selector = "0x1ce07d51"; // createGameRoom(uint256,uint256,uint256,uint256,uint256,uint256[10])
+        StringBuilder data = new StringBuilder(selector);
+        data.append(padLeft(minPlayers.toString(16), 64));
+        data.append(padLeft(maxPlayers.toString(16), 64));
+        data.append(padLeft(minStake.toString(16), 64));
+        data.append(padLeft(maxStake.toString(16), 64));
+        data.append(padLeft(jokerCount.toString(16), 64));
+        for (int i = 0; i < 10; i++) {
+            BigInteger v = (cardCounts != null && i < cardCounts.length && cardCounts[i] != null)
+                    ? cardCounts[i] : BigInteger.ZERO;
+            data.append(padLeft(v.toString(16), 64));
+        }
+        return data.toString();
+    }
+
+    public static String encodeGetGameRoom(BigInteger gameId) {
+        String selector = selector("getGameRoom(uint256)");
+        return selector + padLeft(gameId.toString(16), 64);
+    }
+
+    public static String encodeGetGameConfig(BigInteger gameId) {
+        String selector = selector("gameConfigs(uint256)");
+        return selector + padLeft(gameId.toString(16), 64);
+    }
+
+    public static String encodeJoinGameV2() {
+        return selector("joinGame()");
+    }
+
+    public static String encodeStartGame() {
+        return selector("startGame()");
+    }
+
+    public static String encodeGetPlayerCards(String player) {
+        return selector("getPlayerCards(address)") + padLeft(cleanAddress(player), 64);
+    }
+
+    public static String encodeGetPlayerStake(BigInteger gameId, String player) {
+        return selector("getPlayerStake(uint256,address)")
+                + padLeft(gameId.toString(16), 64)
+                + padLeft(cleanAddress(player), 64);
+    }
+
+    // 兼容旧签名 takeCard(address,uint8)
+    public static String encodeTakeCard(String target, int cardNumber) {
+        return selector("takeCard(address,uint8)")
+                + padLeft(cleanAddress(target), 64)
+                + padLeft(Integer.toHexString(cardNumber), 64);
+    }
+
+    // 新签名 takeCard(uint8)
+    public static String encodeTakeCard(int cardNumber) {
+        return selector("takeCard(uint8)") + padLeft(Integer.toHexString(cardNumber), 64);
+    }
+
+    public static String encodeGetCurrentTurnPlayer() {
+        return selector("getCurrentTurnPlayer()");
+    }
+
+    public static String encodeGetTakeTarget() {
+        return selector("getTakeTarget()");
+    }
+
+    // ====================== Game: Decode ======================
+
+    public static BigInteger decodeUint256(String hexData, int index) {
+        String clean = cleanHex(hexData);
+        int start = index * 64;
+        int end = start + 64;
+        if (clean.length() < end) return BigInteger.ZERO;
+        return new BigInteger(clean.substring(start, end), 16);
+    }
+
+    public static BigInteger[] decodeUint256Array(String hexData, int startIndex, int length) {
+        BigInteger[] arr = new BigInteger[length];
+        for (int i = 0; i < length; i++) {
+            arr[i] = decodeUint256(hexData, startIndex + i);
+        }
+        return arr;
+    }
+
+    /**
+     * 解码单个 ABI 动态 address[]（从 data 开头即该数组的 head 开始）。
+     */
+    public static List<String> decodeAddressArray(String hexData, int ignoredOffset) {
+        List<String> out = new ArrayList<>();
+        String clean = cleanHex(hexData);
+        if (clean.length() < 128) return out;
+
+        int arrOffsetBytes = new BigInteger(clean.substring(0, 64), 16).intValue();
+        int arrOffset = arrOffsetBytes * 2;
+        if (clean.length() < arrOffset + 64) return out;
+
+        int len = new BigInteger(clean.substring(arrOffset, arrOffset + 64), 16).intValue();
+        int cursor = arrOffset + 64;
+        for (int i = 0; i < len; i++) {
+            int end = cursor + 64;
+            if (clean.length() < end) break;
+            out.add("0x" + clean.substring(cursor + 24, end));
+            cursor = end;
+        }
+        return out;
+    }
+
+    /**
+     * GameEnded(uint256 indexed gameId, address[] losers, address[] winners) 的 data 区：
+     * 前两字为两个动态数组的偏移量，随后依次展开两个 address[]。
+     */
+    public static void decodeGameEndedLosersWinners(String hexData, List<String> losersOut, List<String> winnersOut) {
+        losersOut.clear();
+        winnersOut.clear();
+        String clean = cleanHex(hexData);
+        if (clean.length() < 128) return;
+
+        int offLosersBytes = new BigInteger(clean.substring(0, 64), 16).intValue();
+        int offWinnersBytes = new BigInteger(clean.substring(64, 128), 16).intValue();
+        int offLosers = offLosersBytes * 2;
+        int offWinners = offWinnersBytes * 2;
+
+        if (clean.length() < offLosers + 64) return;
+        int lenL = new BigInteger(clean.substring(offLosers, offLosers + 64), 16).intValue();
+        int cur = offLosers + 64;
+        for (int i = 0; i < lenL; i++) {
+            if (clean.length() < cur + 64) break;
+            losersOut.add("0x" + clean.substring(cur + 24, cur + 64));
+            cur += 64;
+        }
+
+        if (clean.length() < offWinners + 64) return;
+        int lenW = new BigInteger(clean.substring(offWinners, offWinners + 64), 16).intValue();
+        cur = offWinners + 64;
+        for (int i = 0; i < lenW; i++) {
+            if (clean.length() < cur + 64) break;
+            winnersOut.add("0x" + clean.substring(cur + 24, cur + 64));
+            cur += 64;
+        }
+    }
+
+    // ====================== Helpers ======================
+
+    public static String getEventSignatureHash(String signature) {
+        return keccak256Hex(signature).substring(0, 64);
+    }
+
+    private static String selector(String signature) {
+        return "0x" + keccak256Hex(signature).substring(0, 8);
+    }
+
+    private static String keccak256Hex(String text) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA3-256");
+            byte[] hash = digest.digest(text.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : hash) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Exception e) {
+            throw new RuntimeException("keccak256 failed: " + e.getMessage(), e);
+        }
+    }
+
+    private static String cleanHex(String s) {
+        return s != null && s.startsWith("0x") ? s.substring(2) : (s == null ? "" : s);
+    }
+
+    private static String cleanAddress(String addr) {
+        if (addr == null) return "";
+        return addr.startsWith("0x") ? addr.substring(2) : addr;
+    }
+
 
 }
