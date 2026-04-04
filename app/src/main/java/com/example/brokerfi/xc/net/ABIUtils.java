@@ -530,16 +530,25 @@ public class ABIUtils {
 
     // ====================== Game: Encode ======================
 
+    /**
+     * createGameRoom(..., vrfCoordinator, vrfSubId, vrfKeyHash, vrfCallbackGasLimit, vrfRequestConfirmations)
+     * vrfCoordinator 为 0 地址时不使用 VRF，满员后同步发牌。
+     */
     public static String encodeCreateGameRoomV2(
             BigInteger minPlayers,
             BigInteger maxPlayers,
             BigInteger minStake,
             BigInteger maxStake,
             BigInteger jokerCount,
-            BigInteger[] cardCounts
+            BigInteger[] cardCounts,
+            String vrfCoordinator,
+            BigInteger vrfSubId,
+            String vrfKeyHashHexNoPrefix,
+            BigInteger vrfCallbackGasLimit,
+            BigInteger vrfRequestConfirmations
     ) {
-        String selector = "0x1ce07d51"; // createGameRoom(uint256,uint256,uint256,uint256,uint256,uint256[10])
-        StringBuilder data = new StringBuilder(selector);
+        String sig = "createGameRoom(uint256,uint256,uint256,uint256,uint256,uint256[10],address,uint64,bytes32,uint32,uint16)";
+        StringBuilder data = new StringBuilder(selector(sig));
         data.append(padLeft(minPlayers.toString(16), 64));
         data.append(padLeft(maxPlayers.toString(16), 64));
         data.append(padLeft(minStake.toString(16), 64));
@@ -550,7 +559,24 @@ public class ABIUtils {
                     ? cardCounts[i] : BigInteger.ZERO;
             data.append(padLeft(v.toString(16), 64));
         }
+        data.append(padLeft(cleanAddress(vrfCoordinator), 64));
+        BigInteger sub = vrfSubId != null ? vrfSubId : BigInteger.ZERO;
+        data.append(padLeft(sub.toString(16), 64));
+        data.append(padBytes32Hex(vrfKeyHashHexNoPrefix));
+        BigInteger gas = vrfCallbackGasLimit != null ? vrfCallbackGasLimit : BigInteger.ZERO;
+        data.append(padLeft(gas.toString(16), 64));
+        BigInteger conf = vrfRequestConfirmations != null ? vrfRequestConfirmations : BigInteger.ZERO;
+        data.append(padLeft(conf.toString(16), 64));
         return data.toString();
+    }
+
+    /** bytes32：无 0x 的 hex，不足 64 字符左侧补 0 */
+    private static String padBytes32Hex(String hexNoPrefix) {
+        String h = cleanHex(hexNoPrefix);
+        if (h.length() > 64) {
+            h = h.substring(h.length() - 64);
+        }
+        return padLeft(h, 64);
     }
 
     public static String encodeGetGameRoom(BigInteger gameId) {

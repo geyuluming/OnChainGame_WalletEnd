@@ -1,5 +1,7 @@
 package com.example.brokerfi.config;
 
+import java.math.BigInteger;
+
 public class GameConfig {
     // BrokerChain测试网RPC地址（从钱包浏览器URL获取）
     public static final String BROKERCHAIN_RPC = "http://192.168.1.13:36944";
@@ -7,6 +9,19 @@ public class GameConfig {
     // 部署后的合约地址（替换为实际部署地址）
     public static final String STAKING_VAULT_ADDRESS = "0x69e3c96Df4Fa9567B1b7d83749C37e6FFd4B5Be6";
     public static final String GAME_FACTORY_ADDRESS = "0x986137E257593E2E574147d77873618D53CDd73A";
+
+    /**
+     * Chainlink VRF v2 订阅模式（可选）。
+     * coordinator 为 0 地址时房间满员后仍同步发牌，与未接入 VRF 时行为一致。
+     * 使用 VRF 时：需在 Chainlink 订阅中将每个新部署的 GameRoom 地址添加为 consumer，
+     * 并填写本链的 Coordinator 地址、subscriptionId、keyHash（见官方文档 gas lane）。
+     */
+    public static final String VRF_COORDINATOR_ADDRESS = "0x0000000000000000000000000000000000000000";
+    public static final BigInteger VRF_SUBSCRIPTION_ID = BigInteger.ZERO;
+    /** 64 位十六进制、无 0x；未启用 VRF 时可全 0 */
+    public static final String VRF_KEY_HASH_HEX = "0000000000000000000000000000000000000000000000000000000000000000";
+    public static final BigInteger VRF_CALLBACK_GAS_LIMIT = BigInteger.valueOf(500_000L);
+    public static final BigInteger VRF_REQUEST_CONFIRMATIONS = BigInteger.valueOf(3L);
 
     // 合约ABI
     public static final String GAME_FACTORY_ABI = "[\n" +

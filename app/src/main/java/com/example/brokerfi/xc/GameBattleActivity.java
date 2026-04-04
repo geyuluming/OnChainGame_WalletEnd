@@ -308,11 +308,16 @@ public class GameBattleActivity extends AppCompatActivity {
         }
         try {
             int cardNumber = spCardSelect.getSelectedItemPosition();
+            if (currentTargetPlayer == null || currentTargetPlayer.length() < 10) {
+                Toast.makeText(this, "抽牌目标未就绪", Toast.LENGTH_SHORT).show();
+                return;
+            }
             if (!canTakeSelectedCard(cardNumber)) {
                 Toast.makeText(this, "目标没有这张牌，请重选", Toast.LENGTH_SHORT).show();
                 return;
             }
-            String data = ABIUtils.encodeTakeCard(cardNumber);
+            // 与链上 takeCard(address,uint8) 一致：0=小丑，1–10=数字牌；target 为当前抽牌目标
+            String data = ABIUtils.encodeTakeCard(currentTargetPlayer, cardNumber);
 
             JSONObject txParams = new JSONObject();
             txParams.put("from", myAddress);
@@ -562,7 +567,7 @@ public class GameBattleActivity extends AppCompatActivity {
         else btnTakeCard.setText(targetCardsReady ? "抽牌" : "加载中…");
     }
 
-    /** 与链上 takeCard(uint8) 一致：0=小丑，1–10=数字牌。 */
+    /** 与链上 takeCard(address,uint8) 一致：0=小丑，1–10=数字牌。 */
     private boolean canTakeSelectedCard(int cardNumber) {
         if (!targetCardsReady) return true;
         if (cardNumber == 0) {
