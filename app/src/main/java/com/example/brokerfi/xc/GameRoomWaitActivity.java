@@ -271,10 +271,9 @@ public class GameRoomWaitActivity extends AppCompatActivity {
                     || roomOwnerOnChain.equalsIgnoreCase("0x0000000000000000000000000000000000000000")) {
                 queryRoomOwner();
             }
-            // 1. 监听PlayerJoined事件
-            fetchPlayerJoinedEvents();
-            // 2. 监听GameStarted事件
-            fetchGameStartedEvents();
+            // RPC 可能不支持 eth_getLogs：改为 eth_call 轮询房间状态
+            fetchPlayersByCall();
+            fetchGameStateByCall();
             // 3. 更新UI
             updateUI();
 
@@ -282,126 +281,92 @@ public class GameRoomWaitActivity extends AppCompatActivity {
         }, 1000);
     }
 
-    // 监听PlayerJoined事件
-    private void fetchPlayerJoinedEvents() {
+    /** eth_call GameRoom.getPlayers() 获取玩家列表（替代 eth_getLogs PlayerJoined） */
+    private void fetchPlayersByCall() {
         try {
             if (roomAddress == null || gameId == null) return;
-
-            Log.d(TAG, "监听PlayerJoined事件，room：" + roomAddress + ", gameId：" + gameId);
-
-            JSONObject req = new JSONObject();
-            req.put("jsonrpc", "2.0");
-            req.put("method", "eth_getLogs");
-
-            JSONObject filter = new JSONObject();
-            filter.put("address", roomAddress);
-            JSONArray topics = new JSONArray();
-            // PlayerJoined事件签名：PlayerJoined(uint256,address,uint256)
-            topics.put("0x" + ABIUtils.getEventSignatureHash("PlayerJoined(uint256,address,uint256)"));
-            topics.put("0x" + String.format("%064x", gameId)); // gameId索引
-
-            filter.put("topics", topics);
-            filter.put("fromBlock", "0x0");
-            filter.put("toBlock", "latest");
+            String data = ABIUtils.encodeGetPlayers();
+            JSONObject callParams = new JSONObject();
+            callParams.put("from", hostAddress);
+            callParams.put("to", roomAddress);
+            callParams.put("data", data);
+            callParams.put("value", "0x0");
 
             JSONArray params = new JSONArray();
-            params.put(filter);
-            req.put("params", params);
-            req.put("id", 999);
+            params.put(callParams);
+            params.put("latest");
 
-            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, req.toString(), new MyCallBack() {
+            JSONObject request = new JSONObject();
+            request.put("jsonrpc", "2.0");
+            request.put("method", "eth_call");
+            request.put("params", params);
+            request.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, request.toString(), new MyCallBack() {
                 @Override
                 public void onSuccess(String result) {
                     try {
-                        Log.d(TAG, "PlayerJoined事件返回：" + result);
                         JSONObject res = new JSONObject(result);
-                        JSONArray logs = res.getJSONArray("result");
-
-                        // 重置玩家数据
+                        String raw = res.optString("result", "0x");
+                        List<String> addrs = ABIUtils.decodeAddressArray(raw, 0);
                         playerList.clear();
                         playerStakeMap.clear();
                         totalStake = BigInteger.ZERO;
-
-                        // 解析所有PlayerJoined事件
-                        for (int i = 0; i < logs.length(); i++) {
-                            JSONObject log = logs.getJSONObject(i);
-                            JSONArray tp = log.getJSONArray("topics");
-                            String data = log.getString("data");
-
-                            // 解析玩家地址和质押金额
-                            String player = "0x" + tp.getString(2).substring(26);
-                            BigInteger stake = new BigInteger(data.substring(2), 16);
-
-                            // 添加玩家
-                            if (!playerList.contains(player)) {
-                                playerList.add(player);
-                                playerStakeMap.put(player, stake);
-                                totalStake = totalStake.add(stake);
-                                Log.d(TAG, "玩家加入：" + player + "，质押：" + fromWei(stake) + " BKC");
-                            }
+                        for (String p : addrs) {
+                            if (p == null || p.length() < 10) continue;
+                            if (!playerList.contains(p)) playerList.add(p);
                         }
-
-                        Log.i(TAG, "当前玩家数：" + playerList.size() + "，总质押：" + fromWei(totalStake) + " BKC");
-
                         refreshStakesFromVault();
-
                     } catch (Exception e) {
-                        Log.e(TAG, "解析PlayerJoined事件异常：", e);
+                        Log.e(TAG, "fetchPlayersByCall 解析异常", e);
                     }
                 }
 
                 @Override
                 public Void onError(Exception e) {
-                    Log.e(TAG, "获取PlayerJoined事件失败：", e);
+                    Log.e(TAG, "fetchPlayersByCall 网络错误", e);
                     return null;
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "监听PlayerJoined事件异常：", e);
+            Log.e(TAG, "fetchPlayersByCall 异常", e);
         }
     }
 
-    // 监听GameStarted事件
-    private void fetchGameStartedEvents() {
+    /** eth_call GameRoom.gameState() 判断是否已开局（替代 eth_getLogs GameStarted） */
+    private void fetchGameStateByCall() {
         try {
             if (roomAddress == null || gameId == null) return;
-
-            JSONObject req = new JSONObject();
-            req.put("jsonrpc", "2.0");
-            req.put("method", "eth_getLogs");
-
-            JSONObject filter = new JSONObject();
-            filter.put("address", roomAddress);
-            JSONArray topics = new JSONArray();
-            // GameStarted事件签名：GameStarted(uint256)
-            topics.put("0x" + ABIUtils.getEventSignatureHash("GameStarted(uint256)"));
-            topics.put("0x" + String.format("%064x", gameId)); // gameId索引
-
-            filter.put("topics", topics);
-            filter.put("fromBlock", "0x0");
-            filter.put("toBlock", "latest");
+            String data = ABIUtils.encodeGameState(); // 旧版写死 selector 也能用
+            JSONObject callParams = new JSONObject();
+            callParams.put("from", hostAddress);
+            callParams.put("to", roomAddress);
+            callParams.put("data", data);
+            callParams.put("value", "0x0");
 
             JSONArray params = new JSONArray();
-            params.put(filter);
-            req.put("params", params);
-            req.put("id", 1000);
+            params.put(callParams);
+            params.put("latest");
 
-            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, req.toString(), new MyCallBack() {
+            JSONObject request = new JSONObject();
+            request.put("jsonrpc", "2.0");
+            request.put("method", "eth_call");
+            request.put("params", params);
+            request.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, request.toString(), new MyCallBack() {
                 @Override
                 public void onSuccess(String result) {
                     try {
                         JSONObject res = new JSONObject(result);
-                        JSONArray logs = res.getJSONArray("result");
-
-                        if (logs.length() > 0) {
-                            // 游戏已开始
+                        String raw = res.optString("result", "0x");
+                        BigInteger st = new BigInteger(raw.startsWith("0x") ? raw.substring(2) : raw, 16);
+                        // enum GameState { PENDING(0), DEALING(1), PLAYING(2), ENDED(3) }
+                        if (st.compareTo(BigInteger.valueOf(2)) >= 0) {
                             gameStatus = "游戏中";
                             isWaiting = false;
-                            Log.i(TAG, "✅ 检测到GameStarted事件，游戏已开始！");
-
                             runOnUiThread(() -> {
                                 Toast.makeText(GameRoomWaitActivity.this, "游戏开始！", Toast.LENGTH_SHORT).show();
-                                // 跳转至游戏战斗页面
                                 Intent intent = new Intent(GameRoomWaitActivity.this, GameBattleActivity.class);
                                 intent.putExtra("gameId", gameId.toString());
                                 intent.putExtra("roomAddress", roomAddress);
@@ -411,20 +376,21 @@ public class GameRoomWaitActivity extends AppCompatActivity {
                             });
                         }
                     } catch (Exception e) {
-                        Log.e(TAG, "解析GameStarted事件异常：", e);
+                        Log.e(TAG, "fetchGameStateByCall 解析异常", e);
                     }
                 }
 
                 @Override
                 public Void onError(Exception e) {
-                    Log.e(TAG, "获取GameStarted事件失败：", e);
                     return null;
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "监听GameStarted事件异常：", e);
+            Log.e(TAG, "fetchGameStateByCall 异常", e);
         }
     }
+
+    // eth_getLogs 在部分节点不可用，保留旧方法删除/弃用
 
     /**
      * 以 StakingVault.getPlayerStake 为准刷新每位玩家质押与列表展示（与链上奖池一致）。
@@ -445,7 +411,12 @@ public class GameRoomWaitActivity extends AppCompatActivity {
                         runOnUiThread(() -> {
                             totalStake = BigInteger.ZERO;
                             for (String p : playerList) {
-                                totalStake = totalStake.add(playerStakeMap.getOrDefault(p, BigInteger.ZERO));
+                                BigInteger stakeValue = playerStakeMap.get(p);
+// 判空，如果key不存在则使用默认值 BigInteger.ZERO
+                                if (stakeValue == null) {
+                                    stakeValue = BigInteger.ZERO;
+                                }
+                                totalStake = totalStake.add(stakeValue);
                             }
                             tvPlayerList.setText(buildPlayerListText());
                             tvStakeAmount.setText("总质押：" + fromWei(totalStake) + " BKC");
@@ -511,7 +482,10 @@ public class GameRoomWaitActivity extends AppCompatActivity {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < playerList.size(); i++) {
             String p = playerList.get(i);
-            BigInteger st = playerStakeMap.getOrDefault(p, BigInteger.ZERO);
+            BigInteger st = playerStakeMap.get(p);
+            if (st == null) {
+                st = BigInteger.ZERO;
+            }
             sb.append(i + 1).append(". ").append(shortAddr(p)).append("  ")
                     .append(fromWei(st)).append(" BKC\n");
         }

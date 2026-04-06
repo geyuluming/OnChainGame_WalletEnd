@@ -638,6 +638,15 @@ public class ABIUtils {
         return selector("getTakeTarget()");
     }
 
+    /** GameRoom.getPlayers()：用于在 RPC 不支持 eth_getLogs 时拉取玩家列表 */
+    public static String encodeGetPlayers() {
+        return selector("getPlayers()");
+    }
+
+    public static String encodeGetPlayerCount() {
+        return selector("getPlayerCount()");
+    }
+
     // ====================== Game: Decode ======================
 
     public static BigInteger decodeUint256(String hexData, int index) {
