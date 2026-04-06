@@ -20,7 +20,7 @@ import java.math.BigDecimal;
 
 public class GameMainActivity extends AppCompatActivity {
     private static final String TAG = "GameMainActivity";
-    private EditText etMinPlayers, etMaxPlayers, etMinStake, etMaxStake, etJokerCount;
+    private EditText etMinPlayers, etMaxPlayers, etMinStake, etMaxStake, etJokerCount, etMyStake;
     private Button btnCreateGame, btnJoinGame;
 
     @Override
@@ -35,6 +35,7 @@ public class GameMainActivity extends AppCompatActivity {
         etMinStake = findViewById(R.id.et_min_stake);
         etMaxStake = findViewById(R.id.et_max_stake);
         etJokerCount = findViewById(R.id.et_joker_count);
+        etMyStake = findViewById(R.id.et_my_stake);
         btnCreateGame = findViewById(R.id.btn_create_game);
         btnJoinGame = findViewById(R.id.btn_join_game);
         Log.d(TAG, "控件绑定完成");
@@ -45,6 +46,7 @@ public class GameMainActivity extends AppCompatActivity {
         etMinStake.setText("1"); // 1 BKC
         etMaxStake.setText("100"); // 100 BKC
         etJokerCount.setText("1");
+        etMyStake.setText("1");
         Log.d(TAG, "输入框默认值已设置");
 
         // 创建游戏按钮事件
@@ -86,6 +88,16 @@ public class GameMainActivity extends AppCompatActivity {
             BigInteger minStake = toWei(minStakeStr);
             BigInteger maxStake = toWei(maxStakeStr);
             BigInteger jokerCount = new BigInteger(jokerCountStr);
+            String myStakeStr = etMyStake.getText().toString().trim();
+            if (myStakeStr.isEmpty()) {
+                Toast.makeText(this, "请填写本人质押（BKC）", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            BigInteger myStakeWei = toWei(myStakeStr);
+            if (myStakeWei.compareTo(minStake) < 0 || myStakeWei.compareTo(maxStake) > 0) {
+                Toast.makeText(this, "本人质押须在最小与最大质押之间", Toast.LENGTH_SHORT).show();
+                return;
+            }
 
             // 3. 卡牌配置（合约要求偶数张，最大20张/数字）
             BigInteger[] cardCounts = new BigInteger[10];
@@ -109,7 +121,8 @@ public class GameMainActivity extends AppCompatActivity {
                     GameConfig.VRF_SUBSCRIPTION_ID,
                     GameConfig.VRF_KEY_HASH_HEX,
                     GameConfig.VRF_CALLBACK_GAS_LIMIT,
-                    GameConfig.VRF_REQUEST_CONFIRMATIONS
+                    GameConfig.VRF_REQUEST_CONFIRMATIONS,
+                    GameConfig.ECVRF_RELAY_ADDRESS
             );
             Log.i(TAG, "ABI 编码完成，data = " + data);
 
@@ -178,6 +191,82 @@ public class GameMainActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * 创建房间收据确认后：第二笔交易加入房间（质押通过 msg.value），成功后再进入等待页。
+     */
+    private void joinCreatedRoom(String roomAddress, BigInteger gameId, String createTxHash) {
+        try {
+            String myStakeStr = etMyStake.getText().toString().trim();
+            if (myStakeStr.isEmpty()) {
+                Toast.makeText(this, "请填写本人质押后再加入", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            BigInteger minStake = toWei(etMinStake.getText().toString().trim());
+            BigInteger maxStake = toWei(etMaxStake.getText().toString().trim());
+            BigInteger myStakeWei = toWei(myStakeStr);
+            if (myStakeWei.compareTo(minStake) < 0 || myStakeWei.compareTo(maxStake) > 0) {
+                Toast.makeText(this, "本人质押须在最小与最大质押之间", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            String data = ABIUtils.encodeJoinGameV2();
+            String from = getCurrentWalletAddress();
+            JSONObject txParams = new JSONObject();
+            txParams.put("from", from);
+            txParams.put("to", roomAddress);
+            txParams.put("data", data);
+            txParams.put("value", "0x" + myStakeWei.toString(16));
+            txParams.put("gas", "0x800000");
+
+            JSONArray params = new JSONArray();
+            params.put(txParams);
+            JSONObject request = new JSONObject();
+            request.put("jsonrpc", "2.0");
+            request.put("method", "eth_sendTransaction");
+            request.put("params", params);
+            request.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, request.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        JSONObject response = new JSONObject(result);
+                        if (response.has("result")) {
+                            String joinTx = response.getString("result");
+                            Log.i(TAG, "加入房间交易已提交：" + joinTx);
+                            runOnUiThread(() -> {
+                                Toast.makeText(GameMainActivity.this, "已提交加入房间", Toast.LENGTH_SHORT).show();
+                                Intent intent = new Intent(GameMainActivity.this, GameRoomWaitActivity.class);
+                                intent.putExtra("txHash", createTxHash);
+                                intent.putExtra("gameId", gameId.toString());
+                                intent.putExtra("roomAddress", roomAddress);
+                                startActivity(intent);
+                            });
+                        } else {
+                            String err = response.optJSONObject("error") == null ? "unknown"
+                                    : response.optJSONObject("error").optString("message", "unknown");
+                            Log.e(TAG, "加入房间失败：" + err);
+                            runOnUiThread(() -> Toast.makeText(GameMainActivity.this, "加入失败：" + err, Toast.LENGTH_LONG).show());
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "解析加入结果异常", e);
+                        runOnUiThread(() -> Toast.makeText(GameMainActivity.this, "解析失败：" + e.getMessage(), Toast.LENGTH_SHORT).show());
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    Log.e(TAG, "加入房间网络错误", e);
+                    runOnUiThread(() -> Toast.makeText(GameMainActivity.this, "网络错误：" + e.getMessage(), Toast.LENGTH_SHORT).show());
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "joinCreatedRoom 异常", e);
+            Toast.makeText(this, "加入参数错误：" + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
     // 查询交易收据获取gameId和room地址
     private void queryGameRoomInfo(String txHash) {
         try {
@@ -220,14 +309,11 @@ public class GameMainActivity extends AppCompatActivity {
                                 Log.i(TAG, "roomAddress：" + roomAddress);
                                 Log.i(TAG, "host：" + hostAddress);
 
-                                // 跳转至等待页面
-                                runOnUiThread(() -> {
-                                    Intent intent = new Intent(GameMainActivity.this, GameRoomWaitActivity.class);
-                                    intent.putExtra("txHash", txHash);
-                                    intent.putExtra("gameId", gameId.toString());
-                                    intent.putExtra("roomAddress", roomAddress);
-                                    startActivity(intent);
-                                });
+                                // 创建成功后第二笔交易：joinGame（带质押），再进等待页
+                                final BigInteger gid = gameId;
+                                final String room = roomAddress;
+                                final String createTx = txHash;
+                                runOnUiThread(() -> joinCreatedRoom(room, gid, createTx));
                                 break;
                             }
                         }

@@ -23,6 +23,12 @@ public class GameConfig {
     public static final BigInteger VRF_CALLBACK_GAS_LIMIT = BigInteger.valueOf(500_000L);
     public static final BigInteger VRF_REQUEST_CONFIRMATIONS = BigInteger.valueOf(3L);
 
+    /**
+     * ECVRF 中继合约地址（{@code ECVRFRelay}）。全 0 表示不启用；启用时需与 vrfCoordinator 全 0 互斥。
+     * 满员后发 {@code ECVRFRandomRequested}，链下对 abi.encode(gameId, room) 做 Prove 后由 relayer 调 relay.submitRandomWord。
+     */
+    public static final String ECVRF_RELAY_ADDRESS = "0x0000000000000000000000000000000000000000";
+
     // 合约ABI
     public static final String GAME_FACTORY_ABI = "[\n" +
             "  {\n" +

@@ -98,7 +98,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:layout_marginBottom="24dp">
+        android:layout_marginBottom="12dp">
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -111,6 +111,26 @@
             android:layout_height="48dp"
             android:hint="1"
             android:inputType="number"
+            android:paddingHorizontal="16dp"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="24dp">
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="本人质押（BKC）："
+            android:textSize="16sp"
+            android:layout_gravity="center_vertical"/>
+        <EditText
+            android:id="@+id/et_my_stake"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:hint="与最小～最大质押范围内"
+            android:inputType="numberDecimal"
             android:paddingHorizontal="16dp"/>
     </LinearLayout>
 

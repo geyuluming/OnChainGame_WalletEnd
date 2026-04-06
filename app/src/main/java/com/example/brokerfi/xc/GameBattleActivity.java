@@ -4,12 +4,13 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.view.Gravity;
 import android.view.View;
-import android.widget.AdapterView;
-import android.widget.ArrayAdapter;
-import android.widget.Button;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
-import android.widget.Spinner;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
@@ -23,16 +24,19 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import java.math.BigInteger;
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
+/**
+ * 战斗页：自己手牌正面扇出；他人牌背 +「?」，顺序与链上 handDisplaySeed 及 multiset 一致（与本人视角相同）。
+ * 轮到自己时点击「下家」对应行的牌背发起 takeCard。
+ */
 public class GameBattleActivity extends AppCompatActivity {
     private static final String TAG = "GameBattleActivity";
 
-    private TextView tvLog, tvResult, tvTurn, tvTarget, tvTargetHint, tvMyCards;
-    private Spinner spCardSelect;
-    private Button btnTakeCard;
-    private ImageView ivCardPreview;
+    private TextView tvLog, tvResult, tvTurn, tvTargetHint;
+    private LinearLayout llOpponents, llMyHand;
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     private String gameId;
@@ -42,12 +46,18 @@ public class GameBattleActivity extends AppCompatActivity {
     private String currentTurnPlayer = "";
     private String currentTargetPlayer = "";
     private boolean isPolling = true;
-    private final BigInteger[] myCards = new BigInteger[10];
-    private BigInteger myJoker = BigInteger.ZERO;
-    private final BigInteger[] targetCards = new BigInteger[10];
-    private BigInteger targetJoker = BigInteger.ZERO;
-    /** 本轮是否已从链上读到目标手牌；未读到前不拦截抽牌，避免误禁用。 */
-    private boolean targetCardsReady = false;
+    private boolean gameOver = false;
+    /** 丢弃过期的异步刷新链，避免轮询重叠导致 UI 错乱 */
+    private volatile int refreshSeq = 0;
+
+    private final Map<String, PlayerHandCache> handCache = new HashMap<>();
+
+    private static final class PlayerHandCache {
+        BigInteger[] hand10 = new BigInteger[10];
+        BigInteger joker = BigInteger.ZERO;
+        BigInteger seed = BigInteger.ZERO;
+        List<Integer> order = new ArrayList<>();
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -57,28 +67,20 @@ public class GameBattleActivity extends AppCompatActivity {
         tvLog = findViewById(R.id.tv_log);
         tvResult = findViewById(R.id.tv_result);
         tvTurn = findViewById(R.id.tv_turn);
-        tvTarget = findViewById(R.id.tv_target);
         tvTargetHint = findViewById(R.id.tv_target_hint);
-        tvMyCards = findViewById(R.id.tv_my_cards);
-        spCardSelect = findViewById(R.id.sp_card_select);
-        btnTakeCard = findViewById(R.id.btn_take_card);
-        ivCardPreview = findViewById(R.id.iv_card_preview);
+        llOpponents = findViewById(R.id.ll_opponents);
+        llMyHand = findViewById(R.id.ll_my_hand);
 
         gameId = getIntent().getStringExtra("gameId");
         roomAddress = getIntent().getStringExtra("roomAddress");
         playerList = getIntent().getStringArrayListExtra("playerList");
         myAddress = getCurrentWalletAddress();
-        Arrays.fill(myCards, BigInteger.ZERO);
-        Arrays.fill(targetCards, BigInteger.ZERO);
 
         if (playerList == null || playerList.isEmpty()) {
             Toast.makeText(this, "玩家列表为空", Toast.LENGTH_SHORT).show();
             finish();
             return;
         }
-
-        initCardSelector();
-        btnTakeCard.setOnClickListener(v -> onTakeCardClicked());
 
         appendLog("========== 游戏开始 ==========");
         appendLog("游戏ID：" + gameId);
@@ -97,6 +99,7 @@ public class GameBattleActivity extends AppCompatActivity {
     };
 
     private void pollTurnAndCards() {
+        if (gameOver) return;
         try {
             String data = ABIUtils.encodeGetCurrentTurnPlayer();
             JSONObject callParams = new JSONObject();
@@ -122,9 +125,7 @@ public class GameBattleActivity extends AppCompatActivity {
                         JSONObject res = new JSONObject(result);
                         currentTurnPlayer = ABIUtils.decodeAddress(res.optString("result", "0x"));
                         runOnUiThread(() -> tvTurn.setText("当前回合：" + shortAddr(currentTurnPlayer)));
-                        updateTakeButtonState();
                         queryTakeTarget();
-                        queryMyCards();
                     } catch (Exception e) {
                         Log.e(TAG, "轮次解析异常", e);
                     }
@@ -166,8 +167,9 @@ public class GameBattleActivity extends AppCompatActivity {
                     try {
                         JSONObject res = new JSONObject(result);
                         currentTargetPlayer = ABIUtils.decodeAddress(res.optString("result", "0x"));
-                        runOnUiThread(() -> tvTarget.setText("抽牌目标：" + shortAddr(currentTargetPlayer)));
-                        queryTargetPlayerCards();
+                        runOnUiThread(() -> updateTargetHint());
+                        final int seq = ++refreshSeq;
+                        refreshAllPlayerHandsSequentially(0, seq);
                     } catch (Exception e) {
                         Log.e(TAG, "解析目标异常", e);
                     }
@@ -183,22 +185,38 @@ public class GameBattleActivity extends AppCompatActivity {
         }
     }
 
-    /** 查询当前抽牌目标的手牌数量，用于提示可抽选项（与链上 takeCard 一致）。 */
-    private void queryTargetPlayerCards() {
-        if (currentTargetPlayer == null || currentTargetPlayer.length() < 10) return;
-        targetCardsReady = false;
+    private void updateTargetHint() {
+        if (gameOver) return;
+        String t = shortAddr(currentTargetPlayer);
+        if (myAddress.equalsIgnoreCase(currentTurnPlayer)) {
+            tvTargetHint.setText("轮到你 · 下家 " + t + " · 点击其牌背抽一张（顺序与TA自己手牌一致）");
+        } else {
+            tvTargetHint.setText("等待 " + shortAddr(currentTurnPlayer) + " · 下家 " + t);
+        }
+    }
+
+    /** 依次拉取每位玩家手牌 + 展示种子，避免并发乱序写缓存 */
+    private void refreshAllPlayerHandsSequentially(int index, int seq) {
+        if (seq != refreshSeq) return;
+        if (gameOver || playerList == null || index >= playerList.size()) {
+            if (seq != refreshSeq) return;
+            runOnUiThread(this::rebuildAllHandsUi);
+            return;
+        }
+        fetchPlayerHand(playerList.get(index), () -> refreshAllPlayerHandsSequentially(index + 1, seq), seq);
+    }
+
+    private void fetchPlayerHand(String player, Runnable next, int seq) {
         try {
-            String data = ABIUtils.encodeGetPlayerCards(currentTargetPlayer);
+            String data = ABIUtils.encodeGetPlayerCards(player);
             JSONObject callParams = new JSONObject();
             callParams.put("from", myAddress);
             callParams.put("to", roomAddress);
             callParams.put("data", data);
             callParams.put("value", "0x0");
-
             JSONArray params = new JSONArray();
             params.put(callParams);
             params.put("latest");
-
             JSONObject request = new JSONObject();
             request.put("jsonrpc", "2.0");
             request.put("method", "eth_call");
@@ -212,113 +230,220 @@ public class GameBattleActivity extends AppCompatActivity {
                         JSONObject res = new JSONObject(result);
                         String raw = res.optString("result", "0x");
                         BigInteger[] cards = ABIUtils.decodeUint256Array(raw, 0, 10);
-                        for (int i = 0; i < 10; i++) targetCards[i] = cards[i];
-                        targetJoker = ABIUtils.decodeUint256(raw, 10);
-                        targetCardsReady = true;
-                        runOnUiThread(() -> {
-                            tvTargetHint.setText(buildTargetHintText());
-                            updateTakeButtonState();
-                        });
+                        BigInteger joker = ABIUtils.decodeUint256(raw, 10);
+                        fetchHandSeed(player, cards, joker, next, seq);
                     } catch (Exception e) {
-                        Log.e(TAG, "解析目标手牌异常", e);
+                        Log.e(TAG, "getPlayerCards " + player, e);
+                        if (seq == refreshSeq && next != null) next.run();
                     }
                 }
 
                 @Override
                 public Void onError(Exception e) {
+                    if (seq == refreshSeq && next != null) next.run();
                     return null;
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "queryTargetPlayerCards异常", e);
+            Log.e(TAG, "fetchPlayerHand", e);
+            if (seq == refreshSeq && next != null) next.run();
         }
     }
 
-    private String buildTargetHintText() {
-        StringBuilder sb = new StringBuilder("目标可抽牌：");
-        boolean any = false;
-        if (targetJoker != null && targetJoker.compareTo(BigInteger.ZERO) > 0) {
-            sb.append("小丑×").append(targetJoker).append(" ");
-            any = true;
+    private void fetchHandSeed(String player, BigInteger[] cards, BigInteger joker, Runnable next, int seq) {
+        try {
+            String data = ABIUtils.encodeHandDisplaySeed(player);
+            JSONObject callParams = new JSONObject();
+            callParams.put("from", myAddress);
+            callParams.put("to", roomAddress);
+            callParams.put("data", data);
+            callParams.put("value", "0x0");
+            JSONArray params = new JSONArray();
+            params.put(callParams);
+            params.put("latest");
+            JSONObject request = new JSONObject();
+            request.put("jsonrpc", "2.0");
+            request.put("method", "eth_call");
+            request.put("params", params);
+            request.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, request.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        String raw = res.optString("result", "0x");
+                        BigInteger seed = ABIUtils.decodeUint256(raw, 0);
+                        PlayerHandCache c = new PlayerHandCache();
+                        System.arraycopy(cards, 0, c.hand10, 0, 10);
+                        c.joker = joker != null ? joker : BigInteger.ZERO;
+                        c.seed = seed;
+                        c.order = HandOrderHelper.shuffleMultiset(c.hand10, c.joker, c.seed);
+                        if (seq == refreshSeq) {
+                            synchronized (handCache) {
+                                handCache.put(player.toLowerCase(), c);
+                            }
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "handDisplaySeed " + player, e);
+                    }
+                    if (seq == refreshSeq && next != null) next.run();
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    if (seq == refreshSeq && next != null) next.run();
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "fetchHandSeed", e);
+            if (seq == refreshSeq && next != null) next.run();
         }
-        for (int i = 0; i < 10; i++) {
-            if (targetCards[i] != null && targetCards[i].compareTo(BigInteger.ZERO) > 0) {
-                sb.append(i + 1).append("号×").append(targetCards[i]).append(" ");
-                any = true;
+    }
+
+    private PlayerHandCache cacheFor(String addr) {
+        if (addr == null) return null;
+        synchronized (handCache) {
+            return handCache.get(addr.toLowerCase());
+        }
+    }
+
+    private void rebuildAllHandsUi() {
+        if (gameOver) return;
+        llOpponents.removeAllViews();
+        llMyHand.removeAllViews();
+
+        boolean myTurn = myAddress.equalsIgnoreCase(currentTurnPlayer);
+        String targetKey = currentTargetPlayer != null ? currentTargetPlayer.toLowerCase() : "";
+
+        for (String p : playerList) {
+            if (p.equalsIgnoreCase(myAddress)) continue;
+
+            PlayerHandCache cache = cacheFor(p);
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.VERTICAL);
+            row.setLayoutParams(new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            int m = dp(6);
+            row.setPadding(0, m, 0, m);
+
+            TextView label = new TextView(this);
+            boolean isTarget = p.equalsIgnoreCase(currentTargetPlayer);
+            label.setText(shortAddr(p) + (isTarget ? "  ← 抽牌目标" : ""));
+            label.setTextSize(13f);
+            row.addView(label);
+
+            HorizontalScrollView hsv = new HorizontalScrollView(this);
+            hsv.setHorizontalScrollBarEnabled(false);
+            LinearLayout cardRow = new LinearLayout(this);
+            cardRow.setOrientation(LinearLayout.HORIZONTAL);
+            hsv.addView(cardRow);
+
+            if (cache == null || cache.order.isEmpty()) {
+                TextView empty = new TextView(this);
+                empty.setText("加载中…");
+                cardRow.addView(empty);
+            } else {
+                for (int slot = 0; slot < cache.order.size(); slot++) {
+                    int cardNum = cache.order.get(slot);
+                    View back = createCardBackView(p, slot, cardNum, myTurn && isTarget);
+                    cardRow.addView(back);
+                }
+            }
+            row.addView(hsv);
+            llOpponents.addView(row);
+        }
+
+        PlayerHandCache mine = cacheFor(myAddress);
+        if (mine == null || mine.order.isEmpty()) {
+            TextView tv = new TextView(this);
+            tv.setText("我的手牌加载中…");
+            llMyHand.addView(tv);
+        } else {
+            for (int cardNum : mine.order) {
+                llMyHand.addView(createCardFrontView(cardNum));
             }
         }
-        if (!any) sb.append("无");
-        if (myAddress.equalsIgnoreCase(currentTurnPlayer)) {
-            sb.append("\n轮到你时，请在上方选择目标实际拥有的一张牌（数字或小丑）。");
-        }
-        return sb.toString();
     }
 
-    private void queryMyCards() {
-        try {
-            String data = ABIUtils.encodeGetPlayerCards(myAddress);
-            JSONObject callParams = new JSONObject();
-            callParams.put("from", myAddress);
-            callParams.put("to", roomAddress);
-            callParams.put("data", data);
-            callParams.put("value", "0x0");
+    private int dp(int d) {
+        return (int) (d * getResources().getDisplayMetrics().density + 0.5f);
+    }
 
-            JSONArray params = new JSONArray();
-            params.put(callParams);
-            params.put("latest");
+    private View createCardBackView(String ownerAddr, int slotIndex, int cardNumber, boolean clickable) {
+        int w = dp(46);
+        int h = dp(70);
+        FrameLayout fl = new FrameLayout(this);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(w, h);
+        lp.setMargins(dp(3), dp(2), dp(3), dp(2));
+        fl.setLayoutParams(lp);
+        fl.setBackgroundResource(R.drawable.card_back_bg);
 
-            JSONObject request = new JSONObject();
-            request.put("jsonrpc", "2.0");
-            request.put("method", "eth_call");
-            request.put("params", params);
-            request.put("id", RequestIdGenerator.getNextId());
+        TextView tv = new TextView(this);
+        tv.setText("?");
+        tv.setTextColor(0xFFE0E0E0);
+        tv.setTextSize(16f);
+        tv.setGravity(Gravity.CENTER);
+        FrameLayout.LayoutParams tlp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+        fl.addView(tv, tlp);
 
-            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, request.toString(), new MyCallBack() {
-                @Override
-                public void onSuccess(String result) {
-                    try {
-                        JSONObject res = new JSONObject(result);
-                        String raw = res.optString("result", "0x");
-                        BigInteger[] cards = ABIUtils.decodeUint256Array(raw, 0, 10);
-                        for (int i = 0; i < 10; i++) myCards[i] = cards[i];
-                        myJoker = ABIUtils.decodeUint256(raw, 10);
-                        runOnUiThread(() -> {
-                            tvMyCards.setText(buildMyCardsText());
-                            updateTakeButtonState();
-                        });
-                    } catch (Exception e) {
-                        Log.e(TAG, "解析我的手牌异常", e);
-                    }
-                }
-
-                @Override
-                public Void onError(Exception e) {
-                    return null;
-                }
+        fl.setAlpha(clickable ? 1f : 0.88f);
+        if (clickable) {
+            fl.setOnClickListener(v -> {
+                pulseView(v);
+                onOpponentCardBackClicked(ownerAddr, slotIndex, cardNumber);
             });
-        } catch (Exception e) {
-            Log.e(TAG, "queryMyCards异常", e);
+        } else {
+            fl.setClickable(false);
         }
+        return fl;
     }
 
-    private void onTakeCardClicked() {
+    private ImageView createCardFrontView(int cardNumber) {
+        ImageView iv = new ImageView(this);
+        int w = dp(50);
+        int h = dp(74);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(w, h);
+        lp.setMargins(dp(3), dp(2), dp(3), dp(2));
+        iv.setLayoutParams(lp);
+        iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        iv.setImageResource(getCardResId(cardNumber));
+        return iv;
+    }
+
+    private void onOpponentCardBackClicked(String ownerAddr, int slotIndex, int cardNumber) {
+        if (gameOver) return;
         if (!myAddress.equalsIgnoreCase(currentTurnPlayer)) {
             Toast.makeText(this, "还没轮到你", Toast.LENGTH_SHORT).show();
             return;
         }
-        try {
-            int cardNumber = spCardSelect.getSelectedItemPosition();
-            if (currentTargetPlayer == null || currentTargetPlayer.length() < 10) {
-                Toast.makeText(this, "抽牌目标未就绪", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            if (!canTakeSelectedCard(cardNumber)) {
-                Toast.makeText(this, "目标没有这张牌，请重选", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            // 与链上 takeCard(address,uint8) 一致：0=小丑，1–10=数字牌；target 为当前抽牌目标
-            String data = ABIUtils.encodeTakeCard(currentTargetPlayer, cardNumber);
+        if (!ownerAddr.equalsIgnoreCase(currentTargetPlayer)) {
+            Toast.makeText(this, "只能抽下家的牌", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        PlayerHandCache c = cacheFor(ownerAddr);
+        if (c == null || slotIndex < 0 || slotIndex >= c.order.size()) {
+            Toast.makeText(this, "手牌数据未就绪", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (c.order.get(slotIndex) != cardNumber) {
+            Toast.makeText(this, "请重试", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        sendTakeCard(ownerAddr, cardNumber);
+    }
 
+    private void pulseView(View v) {
+        v.animate().scaleX(0.98f).scaleY(0.98f).setDuration(60)
+                .withEndAction(() -> v.animate().scaleX(1f).scaleY(1f).setDuration(60).start())
+                .start();
+    }
+
+    private void sendTakeCard(String target, int cardNumber) {
+        try {
+            String data = ABIUtils.encodeTakeCard(target, cardNumber);
             JSONObject txParams = new JSONObject();
             txParams.put("from", myAddress);
             txParams.put("to", roomAddress);
@@ -328,7 +453,6 @@ public class GameBattleActivity extends AppCompatActivity {
 
             JSONArray params = new JSONArray();
             params.put(txParams);
-
             JSONObject request = new JSONObject();
             request.put("jsonrpc", "2.0");
             request.put("method", "eth_sendTransaction");
@@ -341,7 +465,7 @@ public class GameBattleActivity extends AppCompatActivity {
                     try {
                         JSONObject res = new JSONObject(result);
                         if (res.has("result")) {
-                            appendLog("抽牌交易已提交：" + res.getString("result"));
+                            appendLog("抽牌已提交：" + res.getString("result"));
                         } else {
                             String err = res.optJSONObject("error") == null ? "unknown"
                                     : res.optJSONObject("error").optString("message", "unknown");
@@ -363,7 +487,25 @@ public class GameBattleActivity extends AppCompatActivity {
         }
     }
 
+    private int getCardResId(int cardNumber) {
+        if (cardNumber == 0) return R.drawable.joker_a;
+        switch (cardNumber) {
+            case 1: return R.drawable.spade1;
+            case 2: return R.drawable.spade2;
+            case 3: return R.drawable.spade3;
+            case 4: return R.drawable.spade4;
+            case 5: return R.drawable.spade5;
+            case 6: return R.drawable.spade6;
+            case 7: return R.drawable.spade7;
+            case 8: return R.drawable.spade8;
+            case 9: return R.drawable.spade9;
+            case 10: return R.drawable.spade10;
+            default: return R.drawable.joker_b;
+        }
+    }
+
     private void queryGameResult() {
+        if (gameOver) return;
         try {
             JSONObject req = new JSONObject();
             req.put("jsonrpc", "2.0");
@@ -391,6 +533,7 @@ public class GameBattleActivity extends AppCompatActivity {
                         JSONArray logs = res.getJSONArray("result");
                         if (logs.length() <= 0) return;
 
+                        gameOver = true;
                         isPolling = false;
                         handler.removeCallbacksAndMessages(null);
                         JSONObject log = logs.getJSONObject(0);
@@ -402,8 +545,7 @@ public class GameBattleActivity extends AppCompatActivity {
                         appendLog("\n========== 游戏结果 ==========");
                         appendLog("失败者：" + formatAddrList(losers));
                         appendLog("获胜者：" + formatAddrList(winners));
-                        tvResult.setText("本局已结束");
-                        btnTakeCard.setEnabled(false);
+                        runOnUiThread(() -> tvResult.setText("本局已结束"));
                         queryRewardsDistributed(winners);
                     } catch (Exception e) {
                         Log.e(TAG, "解析结果异常", e);
@@ -420,10 +562,6 @@ public class GameBattleActivity extends AppCompatActivity {
         }
     }
 
-    /**
-     * StakingVault: RewardsDistributed(uint256 indexed gameId, uint256 totalRewards, uint256 fee)
-     * totalRewards 为扣费后分给获胜者的奖池；fee 为协议手续费。
-     */
     private void queryRewardsDistributed(List<String> winners) {
         queryRewardsDistributed(winners, 0);
     }
@@ -503,79 +641,10 @@ public class GameBattleActivity extends AppCompatActivity {
                 String.format("%018d", wei.mod(new BigInteger("1000000000000000000"))).substring(0, 4);
     }
 
-    /** 结果条简短展示 */
     private String fromWeiShort(BigInteger wei) {
         if (wei == null) return "0";
         return wei.divide(new BigInteger("1000000000000000000")).toString() + "." +
                 String.format("%018d", wei.mod(new BigInteger("1000000000000000000"))).substring(0, 2) + "…";
-    }
-
-    private void initCardSelector() {
-        List<String> options = new ArrayList<>();
-        options.add("小丑牌(0)");
-        for (int i = 1; i <= 10; i++) options.add(i + "号牌");
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, options);
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        spCardSelect.setAdapter(adapter);
-        spCardSelect.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                ivCardPreview.setImageResource(getCardResId(position));
-                updateTakeButtonState();
-            }
-            @Override
-            public void onNothingSelected(AdapterView<?> parent) { }
-        });
-    }
-
-    private int getCardResId(int cardNumber) {
-        if (cardNumber == 0) return R.drawable.joker_a;
-        switch (cardNumber) {
-            case 1: return R.drawable.spade1;
-            case 2: return R.drawable.spade2;
-            case 3: return R.drawable.spade3;
-            case 4: return R.drawable.spade4;
-            case 5: return R.drawable.spade5;
-            case 6: return R.drawable.spade6;
-            case 7: return R.drawable.spade7;
-            case 8: return R.drawable.spade8;
-            case 9: return R.drawable.spade9;
-            case 10: return R.drawable.spade10;
-            default: return R.drawable.joker_b;
-        }
-    }
-
-    private String buildMyCardsText() {
-        StringBuilder sb = new StringBuilder("我的手牌：");
-        for (int i = 0; i < 10; i++) {
-            if (myCards[i] != null && myCards[i].compareTo(BigInteger.ZERO) > 0) {
-                sb.append(" ").append(i + 1).append("x").append(myCards[i]);
-            }
-        }
-        if (myJoker.compareTo(BigInteger.ZERO) > 0) sb.append(" 小丑x").append(myJoker);
-        if ("我的手牌：".contentEquals(sb)) sb.append("无");
-        return sb.toString();
-    }
-
-    private void updateTakeButtonState() {
-        boolean myTurn = myAddress.equalsIgnoreCase(currentTurnPlayer);
-        int sel = spCardSelect.getSelectedItemPosition();
-        boolean valid = !myTurn || canTakeSelectedCard(sel);
-        btnTakeCard.setEnabled(myTurn && valid);
-        if (!myTurn) btnTakeCard.setText("等待回合");
-        else if (!valid) btnTakeCard.setText("目标无此牌");
-        else btnTakeCard.setText(targetCardsReady ? "抽牌" : "加载中…");
-    }
-
-    /** 与链上 takeCard(address,uint8) 一致：0=小丑，1–10=数字牌。 */
-    private boolean canTakeSelectedCard(int cardNumber) {
-        if (!targetCardsReady) return true;
-        if (cardNumber == 0) {
-            return targetJoker != null && targetJoker.compareTo(BigInteger.ZERO) > 0;
-        }
-        if (cardNumber < 1 || cardNumber > 10) return false;
-        BigInteger c = targetCards[cardNumber - 1];
-        return c != null && c.compareTo(BigInteger.ZERO) > 0;
     }
 
     private String formatAddrList(List<String> addrs) {
@@ -586,7 +655,7 @@ public class GameBattleActivity extends AppCompatActivity {
     }
 
     private String shortAddr(String addr) {
-        if (addr == null || addr.length() < 10) return addr;
+        if (addr == null || addr.length() < 10) return addr == null ? "" : addr;
         return addr.substring(0, 6) + "..." + addr.substring(addr.length() - 4);
     }
 

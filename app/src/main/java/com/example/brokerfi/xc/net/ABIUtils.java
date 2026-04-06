@@ -531,8 +531,8 @@ public class ABIUtils {
     // ====================== Game: Encode ======================
 
     /**
-     * createGameRoom(..., vrfCoordinator, vrfSubId, vrfKeyHash, vrfCallbackGasLimit, vrfRequestConfirmations)
-     * vrfCoordinator 为 0 地址时不使用 VRF，满员后同步发牌。
+     * createGameRoom(..., vrf..., ecvrfRelay)。
+     * vrfCoordinator 非 0：Chainlink；否则 ecvrfRelay 非 0：ECVRF 中继；否则同步发牌。
      */
     public static String encodeCreateGameRoomV2(
             BigInteger minPlayers,
@@ -545,9 +545,10 @@ public class ABIUtils {
             BigInteger vrfSubId,
             String vrfKeyHashHexNoPrefix,
             BigInteger vrfCallbackGasLimit,
-            BigInteger vrfRequestConfirmations
+            BigInteger vrfRequestConfirmations,
+            String ecvrfRelay
     ) {
-        String sig = "createGameRoom(uint256,uint256,uint256,uint256,uint256,uint256[10],address,uint64,bytes32,uint32,uint16)";
+        String sig = "createGameRoom(uint256,uint256,uint256,uint256,uint256,uint256[10],address,uint64,bytes32,uint32,uint16,address)";
         StringBuilder data = new StringBuilder(selector(sig));
         data.append(padLeft(minPlayers.toString(16), 64));
         data.append(padLeft(maxPlayers.toString(16), 64));
@@ -567,6 +568,7 @@ public class ABIUtils {
         data.append(padLeft(gas.toString(16), 64));
         BigInteger conf = vrfRequestConfirmations != null ? vrfRequestConfirmations : BigInteger.ZERO;
         data.append(padLeft(conf.toString(16), 64));
+        data.append(padLeft(cleanAddress(ecvrfRelay), 64));
         return data.toString();
     }
 
@@ -597,8 +599,17 @@ public class ABIUtils {
         return selector("startGame()");
     }
 
+    /** GameRoom 不可变房主，用于等待页判断谁可点「开始」 */
+    public static String encodeRoomOwner() {
+        return selector("roomOwner()");
+    }
+
     public static String encodeGetPlayerCards(String player) {
         return selector("getPlayerCards(address)") + padLeft(cleanAddress(player), 64);
+    }
+
+    public static String encodeHandDisplaySeed(String player) {
+        return selector("handDisplaySeed(address)") + padLeft(cleanAddress(player), 64);
     }
 
     public static String encodeGetPlayerStake(BigInteger gameId, String player) {

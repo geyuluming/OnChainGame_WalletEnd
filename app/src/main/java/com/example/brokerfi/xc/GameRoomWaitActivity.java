@@ -42,6 +42,8 @@ public class GameRoomWaitActivity extends AppCompatActivity {
     private String gameStatus = "等待玩家";
     private int minPlayers = 2;
     private int maxPlayers = 4;
+    /** 链上 GameRoom.roomOwner()，用于判断谁可点「开始」 */
+    private String roomOwnerOnChain = "";
 
     private Handler handler = new Handler(Looper.getMainLooper());
     private boolean isWaiting = true;
@@ -90,9 +92,50 @@ public class GameRoomWaitActivity extends AppCompatActivity {
 
         // 查询游戏配置（min/max玩家数）
         queryGameConfig();
+        queryRoomOwner();
 
         // 启动事件监听
         startEventSyncLoop();
+    }
+
+    private void queryRoomOwner() {
+        try {
+            if (roomAddress == null || roomAddress.length() < 10) return;
+            String data = ABIUtils.encodeRoomOwner();
+            JSONObject callParams = new JSONObject();
+            callParams.put("from", hostAddress);
+            callParams.put("to", roomAddress);
+            callParams.put("data", data);
+            callParams.put("value", "0x0");
+            JSONArray params = new JSONArray();
+            params.put(callParams);
+            params.put("latest");
+            JSONObject request = new JSONObject();
+            request.put("jsonrpc", "2.0");
+            request.put("method", "eth_call");
+            request.put("params", params);
+            request.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, request.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        roomOwnerOnChain = ABIUtils.decodeAddress(res.optString("result", "0x"));
+                        runOnUiThread(() -> updateUI());
+                    } catch (Exception e) {
+                        Log.e(TAG, "解析 roomOwner 异常", e);
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "queryRoomOwner 异常", e);
+        }
     }
 
     // 从交易收据解析游戏信息
@@ -224,6 +267,10 @@ public class GameRoomWaitActivity extends AppCompatActivity {
             if (!isWaiting) return;
 
             Log.d(TAG, "========== 同步游戏事件 ==========");
+            if (roomOwnerOnChain == null || roomOwnerOnChain.length() < 10
+                    || roomOwnerOnChain.equalsIgnoreCase("0x0000000000000000000000000000000000000000")) {
+                queryRoomOwner();
+            }
             // 1. 监听PlayerJoined事件
             fetchPlayerJoinedEvents();
             // 2. 监听GameStarted事件
@@ -483,13 +530,27 @@ public class GameRoomWaitActivity extends AppCompatActivity {
             tvPlayerCount.setText("玩家：" + playerList.size() + "/" + maxPlayers + " (最少" + minPlayers + "人)");
             tvStakeAmount.setText("总质押：" + fromWei(totalStake) + " BKC");
 
-            // 房主才能启动游戏，且玩家数≥最小玩家数
-            boolean isHost = hostAddress.equalsIgnoreCase(getCurrentWalletAddress());
-            boolean canStart = playerList.size() >= minPlayers && isHost && gameStatus.equals("等待玩家");
+            boolean isOwner = (roomOwnerOnChain != null && roomOwnerOnChain.length() >= 42
+                    && !roomOwnerOnChain.equalsIgnoreCase("0x0000000000000000000000000000000000000000"))
+                    ? getCurrentWalletAddress().equalsIgnoreCase(roomOwnerOnChain)
+                    : hostAddress.equalsIgnoreCase(getCurrentWalletAddress());
+            // 满员由链上自动开局；仅 min≤人数<max 时房主可手动开始
+            boolean canStart = playerList.size() >= minPlayers
+                    && playerList.size() < maxPlayers
+                    && isOwner
+                    && gameStatus.equals("等待玩家");
             btnStartGame.setEnabled(canStart);
-            btnStartGame.setText(isHost ? "开始游戏（房主）" : "等待房主开始");
+            if (!isOwner) {
+                btnStartGame.setText("等待房主开始");
+            } else if (playerList.size() >= maxPlayers) {
+                btnStartGame.setText("已满员，将自动开局");
+            } else if (playerList.size() < minPlayers) {
+                btnStartGame.setText("人数不足，无法开始");
+            } else {
+                btnStartGame.setText("开始游戏（房主）");
+            }
 
-            Log.d(TAG, "UI更新：玩家数=" + playerList.size() + ", 可开始=" + canStart + ", 房主=" + isHost);
+            Log.d(TAG, "UI更新：玩家数=" + playerList.size() + ", 可开始=" + canStart + ", 房主=" + isOwner);
         });
     }
 
