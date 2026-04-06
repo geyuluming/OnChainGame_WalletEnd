@@ -647,6 +647,16 @@ public class ABIUtils {
         return selector("getPlayerCount()");
     }
 
+    // ====================== Vault: Encode ======================
+
+    public static String encodeVaultFactory() {
+        return selector("factory()");
+    }
+
+    public static String encodeVaultFeeReceiver() {
+        return selector("feeReceiver()");
+    }
+
     // ====================== Game: Decode ======================
 
     public static BigInteger decodeUint256(String hexData, int index) {

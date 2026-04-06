@@ -49,6 +49,9 @@ public class GameMainActivity extends AppCompatActivity {
         etMyStake.setText("1");
         Log.d(TAG, "输入框默认值已设置");
 
+        // 启动时检测：Vault.factory 是否已指向 GameFactory，否则 createGameRoom 会 reverted
+        checkVaultFactoryConfigured();
+
         // 创建游戏按钮事件
         btnCreateGame.setOnClickListener(v -> {
             Log.d(TAG, "========== 点击【创建游戏】按钮 ==========");
@@ -61,6 +64,115 @@ public class GameMainActivity extends AppCompatActivity {
             Intent intent = new Intent(GameMainActivity.this, GameJoinActivity.class);
             startActivity(intent);
         });
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        checkVaultFactoryConfigured();
+    }
+
+    private void checkVaultFactoryConfigured() {
+        try {
+            String from = getCurrentWalletAddress();
+            String data = ABIUtils.encodeVaultFactory();
+            JSONObject callParams = new JSONObject();
+            callParams.put("from", from);
+            callParams.put("to", GameConfig.STAKING_VAULT_ADDRESS);
+            callParams.put("data", data);
+            callParams.put("value", "0x0");
+
+            JSONArray params = new JSONArray();
+            params.put(callParams);
+            params.put("latest");
+
+            JSONObject request = new JSONObject();
+            request.put("jsonrpc", "2.0");
+            request.put("method", "eth_call");
+            request.put("params", params);
+            request.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, request.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        String factoryAddr = ABIUtils.decodeAddress(res.optString("result", "0x"));
+                        boolean ok = factoryAddr != null
+                                && factoryAddr.equalsIgnoreCase(GameConfig.GAME_FACTORY_ADDRESS);
+
+                        runOnUiThread(() -> {
+                            btnCreateGame.setEnabled(ok);
+                            if (!ok) {
+                                Toast.makeText(GameMainActivity.this,
+                                        "检测到未配置金库工厂地址：请先用 feeReceiver 调用 StakingVault.setFactory(GameFactory)",
+                                        Toast.LENGTH_LONG).show();
+                            }
+                        });
+
+                        if (!ok) {
+                            Log.e(TAG, "Vault.factory 未指向 GameFactory。vault.factory=" + factoryAddr
+                                    + " expected=" + GameConfig.GAME_FACTORY_ADDRESS);
+                            queryVaultFeeReceiverForHint();
+                        } else {
+                            Log.i(TAG, "Vault.factory 已配置为 GameFactory：" + factoryAddr);
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "解析 Vault.factory 失败", e);
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    Log.e(TAG, "读取 Vault.factory 网络错误", e);
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "checkVaultFactoryConfigured 异常", e);
+        }
+    }
+
+    private void queryVaultFeeReceiverForHint() {
+        try {
+            String from = getCurrentWalletAddress();
+            String data = ABIUtils.encodeVaultFeeReceiver();
+            JSONObject callParams = new JSONObject();
+            callParams.put("from", from);
+            callParams.put("to", GameConfig.STAKING_VAULT_ADDRESS);
+            callParams.put("data", data);
+            callParams.put("value", "0x0");
+
+            JSONArray params = new JSONArray();
+            params.put(callParams);
+            params.put("latest");
+
+            JSONObject request = new JSONObject();
+            request.put("jsonrpc", "2.0");
+            request.put("method", "eth_call");
+            request.put("params", params);
+            request.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, request.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        String feeReceiver = ABIUtils.decodeAddress(res.optString("result", "0x"));
+                        Log.i(TAG, "Vault.feeReceiver=" + feeReceiver + "（需要该地址发 setFactory）");
+                    } catch (Exception e) {
+                        Log.e(TAG, "解析 Vault.feeReceiver 失败", e);
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "queryVaultFeeReceiverForHint 异常", e);
+        }
     }
 
     // 创建游戏房间（适配新GameFactory合约）
