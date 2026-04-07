@@ -34,6 +34,7 @@ public class GameRoomWaitActivity extends AppCompatActivity {
     private BigInteger gameId;
     private String roomAddress;
     private String hostAddress;
+    private String currentWalletAddress;
 
     // 玩家数据（适配合约Player结构）
     private List<String> playerList = new ArrayList<>();
@@ -67,7 +68,8 @@ public class GameRoomWaitActivity extends AppCompatActivity {
         txHash = getIntent().getStringExtra("txHash");
         String gameIdStr = getIntent().getStringExtra("gameId");
         roomAddress = getIntent().getStringExtra("roomAddress");
-        hostAddress = getCurrentWalletAddress();
+        currentWalletAddress = getCurrentWalletAddress();
+        hostAddress = currentWalletAddress;
 
         Log.d(TAG, "页面参数：");
         Log.d(TAG, "txHash：" + txHash);
@@ -316,7 +318,8 @@ public class GameRoomWaitActivity extends AppCompatActivity {
                             if (p == null || p.length() < 10) continue;
                             if (!playerList.contains(p)) playerList.add(p);
                         }
-                        refreshStakesFromVault();
+                        // 质押金额在本合约 playerData.stakeAmount 中（joinGame() 并不会写入 Vault.gameStakes）
+                        refreshStakesFromRoomPlayerData();
                     } catch (Exception e) {
                         Log.e(TAG, "fetchPlayersByCall 解析异常", e);
                     }
@@ -393,9 +396,12 @@ public class GameRoomWaitActivity extends AppCompatActivity {
     // eth_getLogs 在部分节点不可用，保留旧方法删除/弃用
 
     /**
-     * 以 StakingVault.getPlayerStake 为准刷新每位玩家质押与列表展示（与链上奖池一致）。
+     * 以 GameRoom.playerData(address).stakeAmount 为准刷新每位玩家质押与列表展示。
+     *
+     * 注意：当前合约实现中 joinGame() 仅在 GameRoom 内记录 stakeAmount，
+     * 并不会调用 StakingVault.stake/stakeFor 写入 gameStakes，因此用 Vault 查询会始终为 0。
      */
-    private void refreshStakesFromVault() {
+    private void refreshStakesFromRoomPlayerData() {
         if (gameId == null) return;
         if (playerList.isEmpty()) {
             runOnUiThread(() -> tvPlayerList.setText("暂无玩家"));
@@ -403,7 +409,7 @@ public class GameRoomWaitActivity extends AppCompatActivity {
         }
         final AtomicInteger pending = new AtomicInteger(playerList.size());
         for (final String player : playerList) {
-            queryStakeForPlayer(player, new StakeCallback() {
+            queryStakeForPlayerFromRoom(player, new StakeCallback() {
                 @Override
                 public void onStake(BigInteger stake) {
                     playerStakeMap.put(player, stake);
@@ -432,12 +438,17 @@ public class GameRoomWaitActivity extends AppCompatActivity {
         void onStake(BigInteger amount);
     }
 
-    private void queryStakeForPlayer(String player, StakeCallback cb) {
+    private void queryStakeForPlayerFromRoom(String player, StakeCallback cb) {
         try {
-            String data = ABIUtils.encodeGetPlayerStake(gameId, player);
+            if (roomAddress == null || roomAddress.length() < 10) {
+                cb.onStake(BigInteger.ZERO);
+                return;
+            }
+            // GameRoom.playerData(address) 是 public mapping getter
+            String data = ABIUtils.encodePlayerData(player);
             JSONObject callParams = new JSONObject();
             callParams.put("from", hostAddress);
-            callParams.put("to", GameConfig.STAKING_VAULT_ADDRESS);
+            callParams.put("to", roomAddress);
             callParams.put("data", data);
             callParams.put("value", "0x0");
 
@@ -457,7 +468,9 @@ public class GameRoomWaitActivity extends AppCompatActivity {
                     try {
                         JSONObject res = new JSONObject(result);
                         String raw = res.optString("result", "0x");
-                        BigInteger stake = new BigInteger(raw.startsWith("0x") ? raw.substring(2) : raw, 16);
+                        // Player: (addr, stakeAmount, isActive, isOut, handCards[10], jokerCount)
+                        // stakeAmount 位于 index=1
+                        BigInteger stake = ABIUtils.decodeUint256(raw, 1);
                         cb.onStake(stake);
                     } catch (Exception e) {
                         Log.e(TAG, "解析质押失败 " + player, e);
