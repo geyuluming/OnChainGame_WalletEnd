@@ -184,7 +184,9 @@ public class GameJoinActivity extends AppCompatActivity {
 
                         if (response.has("result")) {
                             String txHash = response.getString("result");
+                            String expectedFrom = txParams.optString("from", "");
                             Log.i(TAG, "✅ 加入游戏交易提交成功！Hash：" + txHash);
+                            verifyTxFrom(txHash, expectedFrom);
 
                             runOnUiThread(() -> {
                                 Toast.makeText(GameJoinActivity.this, "加入游戏交易已提交！Hash：" + txHash, Toast.LENGTH_LONG).show();
@@ -215,6 +217,55 @@ public class GameJoinActivity extends AppCompatActivity {
         } catch (Exception e) {
             Log.e(TAG, "发送加入交易异常：", e);
             runOnUiThread(() -> Toast.makeText(this, "发送交易失败：" + e.getMessage(), Toast.LENGTH_SHORT).show());
+        }
+    }
+
+    /**
+     * 交易提交后校验链上实际 from。
+     * 若与当前选中钱包不一致，通常表示节点忽略了 eth_sendTransaction 的 from 字段，
+     * 使用了默认解锁账户来代发。
+     */
+    private void verifyTxFrom(String txHash, String expectedFrom) {
+        try {
+            JSONArray params = new JSONArray();
+            params.put(txHash);
+            JSONObject req = new JSONObject();
+            req.put("jsonrpc", "2.0");
+            req.put("method", "eth_getTransactionByHash");
+            req.put("params", params);
+            req.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, req.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        JSONObject tx = res.optJSONObject("result");
+                        if (tx == null) return;
+                        String actualFrom = tx.optString("from", "");
+                        Log.i(TAG, "地址校验：expectedFrom=" + expectedFrom + ", actualFrom=" + actualFrom + ", txHash=" + txHash);
+                        if (expectedFrom != null && !expectedFrom.isEmpty()
+                                && actualFrom != null && !actualFrom.isEmpty()
+                                && !expectedFrom.equalsIgnoreCase(actualFrom)) {
+                            runOnUiThread(() -> Toast.makeText(
+                                    GameJoinActivity.this,
+                                    "警告：链上交易发送地址与当前钱包不一致（节点可能使用默认解锁账户代发）",
+                                    Toast.LENGTH_LONG
+                            ).show());
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "地址校验解析异常", e);
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    Log.e(TAG, "地址校验网络错误", e);
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "verifyTxFrom 异常", e);
         }
     }
 
