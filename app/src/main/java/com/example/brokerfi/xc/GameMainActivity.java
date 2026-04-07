@@ -378,7 +378,8 @@ public class GameMainActivity extends AppCompatActivity {
                             return;
                         }
 
-                        estimateAndSend(txParams);
+                        // 3) 再读取当前 gameIdCounter / room 映射，排除 “room exists” 等状态类回滚
+                        logFactoryAndVaultRoomStateThenEstimateAndSend(txParams);
                     } catch (Exception e) {
                         Log.e(TAG, "解析 Vault.factory 异常", e);
                     }
@@ -393,6 +394,139 @@ public class GameMainActivity extends AppCompatActivity {
         } catch (Exception e) {
             Log.e(TAG, "precheckVaultFactoryThenEstimateAndSend 异常", e);
         }
+    }
+
+    private void logFactoryAndVaultRoomStateThenEstimateAndSend(JSONObject txParams) {
+        try {
+            String from = txParams.optString("from", "");
+
+            JSONObject callParams = new JSONObject();
+            callParams.put("from", from);
+            callParams.put("to", GameConfig.GAME_FACTORY_ADDRESS);
+            callParams.put("data", ABIUtils.encodeFactoryGameIdCounter());
+            callParams.put("value", "0x0");
+
+            JSONArray params = new JSONArray();
+            params.put(callParams);
+            params.put("latest");
+
+            JSONObject req = new JSONObject();
+            req.put("jsonrpc", "2.0");
+            req.put("method", "eth_call");
+            req.put("params", params);
+            req.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, req.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        if (res.has("error")) {
+                            Log.w(TAG, "读取 gameIdCounter 失败：" + formatRpcError(res.optJSONObject("error")));
+                            estimateAndSend(txParams);
+                            return;
+                        }
+                        BigInteger gid = ABIUtils.decodeUint256(res.optString("result", "0x"), 0);
+                        Log.i(TAG, "GameFactory.gameIdCounter(current)=" + gid);
+
+                        // 读 factory.gameRooms(gid)
+                        java.util.concurrent.atomic.AtomicReference<String> factoryRoomRef = new java.util.concurrent.atomic.AtomicReference<>("0x");
+                        java.util.concurrent.atomic.AtomicReference<String> vaultRoomRef = new java.util.concurrent.atomic.AtomicReference<>("0x");
+
+                        readRoomMapping("GameFactory.gameRooms", GameConfig.GAME_FACTORY_ADDRESS, gid, from, addr -> {
+                            factoryRoomRef.set(addr);
+                            // 读 vault.gameRooms(gid)
+                            readRoomMapping("StakingVault.gameRooms", GameConfig.STAKING_VAULT_ADDRESS, gid, from, vAddr -> {
+                                vaultRoomRef.set(vAddr);
+
+                                // 如果 Vault 已经有 room，但 Factory 映射为空，则 createGameRoom 会在 registerGameRoom 处永远回滚，
+                                // 并导致 gameIdCounter 因回滚无法自增 → 形成“卡死在同一个 gameId”的状态。
+                                if (isNonZeroAddress(vAddr) && !isNonZeroAddress(addr)) {
+                                    String msg = "检测到 Vault.gameRooms(" + gid + ") 已存在：" + vAddr
+                                            + "，但 GameFactory.gameRooms(" + gid + ") 为空。此时 createGameRoom 会因 \"room exists\" 回滚，gameIdCounter 也无法前进。"
+                                            + " 处理方式：直接加入该房间，或重新部署/升级 GameFactory（允许跳过已占用 gameId），或重新部署一个新的 Vault。";
+                                    Log.e(TAG, msg);
+                                    runOnUiThread(() -> Toast.makeText(GameMainActivity.this, msg, Toast.LENGTH_LONG).show());
+                                    return;
+                                }
+
+                                estimateAndSend(txParams);
+                            });
+                        });
+                    } catch (Exception e) {
+                        Log.w(TAG, "解析 gameIdCounter 异常（继续 estimate/send）", e);
+                        estimateAndSend(txParams);
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    Log.w(TAG, "读取 gameIdCounter 网络错误（继续 estimate/send）", e);
+                    estimateAndSend(txParams);
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            Log.w(TAG, "logFactoryAndVaultRoomStateThenEstimateAndSend 异常（继续 estimate/send）", e);
+            estimateAndSend(txParams);
+        }
+    }
+
+    private interface Done { void run(); }
+    private interface AddressDone { void run(String addr); }
+
+    private void readRoomMapping(String label, String contractAddr, BigInteger gameId, String from, AddressDone done) {
+        try {
+            JSONObject callParams = new JSONObject();
+            callParams.put("from", from);
+            callParams.put("to", contractAddr);
+            callParams.put("data", ABIUtils.encodeGameRooms(gameId));
+            callParams.put("value", "0x0");
+
+            JSONArray params = new JSONArray();
+            params.put(callParams);
+            params.put("latest");
+
+            JSONObject req = new JSONObject();
+            req.put("jsonrpc", "2.0");
+            req.put("method", "eth_call");
+            req.put("params", params);
+            req.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, req.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    String decoded = "0x";
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        if (res.has("error")) {
+                            Log.w(TAG, "读取 " + label + " 失败：" + formatRpcError(res.optJSONObject("error")));
+                        } else {
+                            decoded = ABIUtils.decodeAddress(res.optString("result", "0x"));
+                            Log.i(TAG, label + "(" + gameId + ")=" + decoded);
+                        }
+                    } catch (Exception e) {
+                        Log.w(TAG, "解析 " + label + " 异常", e);
+                    }
+                    done.run(decoded);
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    Log.w(TAG, "读取 " + label + " 网络错误", e);
+                    done.run("0x");
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            Log.w(TAG, "构造读取 " + label + " 异常", e);
+            done.run("0x");
+        }
+    }
+
+    private static boolean isNonZeroAddress(String addr) {
+        if (addr == null) return false;
+        return !addr.equalsIgnoreCase("0x0000000000000000000000000000000000000000");
     }
 
     private void estimateAndSend(JSONObject txParams) {

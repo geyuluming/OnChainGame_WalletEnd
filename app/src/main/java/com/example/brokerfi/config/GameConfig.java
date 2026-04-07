@@ -7,8 +7,8 @@ public class GameConfig {
     public static final String BROKERCHAIN_RPC = "http://192.168.1.13:36944";
 
     // 部署后的合约地址（替换为实际部署地址）
-    public static final String STAKING_VAULT_ADDRESS = "0x0Da88ab39A04dD5359a188A9a1ed607D9C4123fC";
-    public static final String GAME_FACTORY_ADDRESS = "0x7B0018df9e0e43ae1A05A688401D8b88C11e6e7B";
+    public static final String STAKING_VAULT_ADDRESS = "0xA5Bb3909C92e4371946a862C3096128a0C9bb25b";
+    public static final String GAME_FACTORY_ADDRESS = "0x02617263E9f880Af85011019aF7256E7b4773729";
 
     /**
      * Chainlink VRF v2 订阅模式（可选）。
@@ -30,241 +30,241 @@ public class GameConfig {
     public static final String ECVRF_RELAY_ADDRESS = "0x0000000000000000000000000000000000000000";
 
     // 合约ABI
-    public static final String GAME_FACTORY_ABI = "[\n" +
-            "  {\n" +
-            "    \"inputs\": [\n" +
-            "      {\n" +
-            "        \"internalType\": \"uint256\",\n" +
-            "        \"name\": \"minPlayers\",\n" +
-            "        \"type\": \"uint256\"\n" +
-            "      },\n" +
-            "      {\n" +
-            "        \"internalType\": \"uint256\",\n" +
-            "        \"name\": \"maxPlayers\",\n" +
-            "        \"type\": \"uint256\"\n" +
-            "      },\n" +
-            "      {\n" +
-            "        \"internalType\": \"uint256\",\n" +
-            "        \"name\": \"minStake\",\n" +
-            "        \"type\": \"uint256\"\n" +
-            "      },\n" +
-            "      {\n" +
-            "        \"internalType\": \"uint256\",\n" +
-            "        \"name\": \"maxStake\",\n" +
-            "        \"type\": \"uint256\"\n" +
-            "      },\n" +
-            "      {\n" +
-            "        \"internalType\": \"uint256\",\n" +
-            "        \"name\": \"jokerCount\",\n" +
-            "        \"type\": \"uint256\"\n" +
-            "      },\n" +
-            "      {\n" +
-            "        \"internalType\": \"uint256[10]\",\n" +
-            "        \"name\": \"cardCounts\",\n" +
-            "        \"type\": \"uint256[10]\"\n" +
-            "      }\n" +
-            "    ],\n" +
-            "    \"name\": \"createGameRoom\",\n" +
-            "    \"outputs\": [\n" +
-            "      {\n" +
-            "        \"components\": [\n" +
-            "          {\n" +
-            "            \"internalType\": \"uint256\",\n" +
-            "            \"name\": \"gameId\",\n" +
-            "            \"type\": \"uint256\"\n" +
-            "          },\n" +
-            "          {\n" +
-            "            \"internalType\": \"address\",\n" +
-            "            \"name\": \"room\",\n" +
-            "            \"type\": \"address\"\n" +
-            "          }\n" +
-            "        ],\n" +
-            "        \"internalType\": \"struct GameFactory.CreateResult\",\n" +
-            "        \"name\": \"\",\n" +
-            "        \"type\": \"tuple\"\n" +
-            "      }\n" +
-            "    ],\n" +
-            "    \"stateMutability\": \"nonpayable\",\n" +
-            "    \"type\": \"function\"\n" +
-            "  },\n" +
-            "  {\n" +
-            "    \"inputs\": [\n" +
-            "      {\n" +
-            "        \"internalType\": \"address payable\",\n" +
-            "        \"name\": \"_stakingVault\",\n" +
-            "        \"type\": \"address\"\n" +
-            "      }\n" +
-            "    ],\n" +
-            "    \"stateMutability\": \"nonpayable\",\n" +
-            "    \"type\": \"constructor\"\n" +
-            "  },\n" +
-            "  {\n" +
-            "    \"anonymous\": false,\n" +
-            "    \"inputs\": [\n" +
-            "      {\n" +
-            "        \"indexed\": true,\n" +
-            "        \"internalType\": \"uint256\",\n" +
-            "        \"name\": \"gameId\",\n" +
-            "        \"type\": \"uint256\"\n" +
-            "      },\n" +
-            "      {\n" +
-            "        \"indexed\": true,\n" +
-            "        \"internalType\": \"address\",\n" +
-            "        \"name\": \"host\",\n" +
-            "        \"type\": \"address\"\n" +
-            "      },\n" +
-            "      {\n" +
-            "        \"indexed\": true,\n" +
-            "        \"internalType\": \"address\",\n" +
-            "        \"name\": \"room\",\n" +
-            "        \"type\": \"address\"\n" +
-            "      },\n" +
-            "      {\n" +
-            "        \"components\": [\n" +
-            "          {\n" +
-            "            \"internalType\": \"uint256\",\n" +
-            "            \"name\": \"minPlayers\",\n" +
-            "            \"type\": \"uint256\"\n" +
-            "          },\n" +
-            "          {\n" +
-            "            \"internalType\": \"uint256\",\n" +
-            "            \"name\": \"maxPlayers\",\n" +
-            "            \"type\": \"uint256\"\n" +
-            "          },\n" +
-            "          {\n" +
-            "            \"internalType\": \"uint256\",\n" +
-            "            \"name\": \"minStake\",\n" +
-            "            \"type\": \"uint256\"\n" +
-            "          },\n" +
-            "          {\n" +
-            "            \"internalType\": \"uint256\",\n" +
-            "            \"name\": \"maxStake\",\n" +
-            "            \"type\": \"uint256\"\n" +
-            "          },\n" +
-            "          {\n" +
-            "            \"internalType\": \"uint256\",\n" +
-            "            \"name\": \"jokerCount\",\n" +
-            "            \"type\": \"uint256\"\n" +
-            "          },\n" +
-            "          {\n" +
-            "            \"internalType\": \"uint256[10]\",\n" +
-            "            \"name\": \"cardCounts\",\n" +
-            "            \"type\": \"uint256[10]\"\n" +
-            "          }\n" +
-            "        ],\n" +
-            "        \"indexed\": false,\n" +
-            "        \"internalType\": \"struct GameRoom.GameConfig\",\n" +
-            "        \"name\": \"cfg\",\n" +
-            "        \"type\": \"tuple\"\n" +
-            "      }\n" +
-            "    ],\n" +
-            "    \"name\": \"GameRoomCreated\",\n" +
-            "    \"type\": \"event\"\n" +
-            "  },\n" +
-            "  {\n" +
-            "    \"inputs\": [\n" +
-            "      {\n" +
-            "        \"internalType\": \"uint256\",\n" +
-            "        \"name\": \"\",\n" +
-            "        \"type\": \"uint256\"\n" +
-            "      }\n" +
-            "    ],\n" +
-            "    \"name\": \"gameConfigs\",\n" +
-            "    \"outputs\": [\n" +
-            "      {\n" +
-            "        \"internalType\": \"uint256\",\n" +
-            "        \"name\": \"minPlayers\",\n" +
-            "        \"type\": \"uint256\"\n" +
-            "      },\n" +
-            "      {\n" +
-            "        \"internalType\": \"uint256\",\n" +
-            "        \"name\": \"maxPlayers\",\n" +
-            "        \"type\": \"uint256\"\n" +
-            "      },\n" +
-            "      {\n" +
-            "        \"internalType\": \"uint256\",\n" +
-            "        \"name\": \"minStake\",\n" +
-            "        \"type\": \"uint256\"\n" +
-            "      },\n" +
-            "      {\n" +
-            "        \"internalType\": \"uint256\",\n" +
-            "        \"name\": \"maxStake\",\n" +
-            "        \"type\": \"uint256\"\n" +
-            "      },\n" +
-            "      {\n" +
-            "        \"internalType\": \"uint256\",\n" +
-            "        \"name\": \"jokerCount\",\n" +
-            "        \"type\": \"uint256\"\n" +
-            "      }\n" +
-            "    ],\n" +
-            "    \"stateMutability\": \"view\",\n" +
-            "    \"type\": \"function\"\n" +
-            "  },\n" +
-            "  {\n" +
-            "    \"inputs\": [],\n" +
-            "    \"name\": \"gameIdCounter\",\n" +
-            "    \"outputs\": [\n" +
-            "      {\n" +
-            "        \"internalType\": \"uint256\",\n" +
-            "        \"name\": \"\",\n" +
-            "        \"type\": \"uint256\"\n" +
-            "      }\n" +
-            "    ],\n" +
-            "    \"stateMutability\": \"view\",\n" +
-            "    \"type\": \"function\"\n" +
-            "  },\n" +
-            "  {\n" +
-            "    \"inputs\": [\n" +
-            "      {\n" +
-            "        \"internalType\": \"uint256\",\n" +
-            "        \"name\": \"\",\n" +
-            "        \"type\": \"uint256\"\n" +
-            "      }\n" +
-            "    ],\n" +
-            "    \"name\": \"gameRooms\",\n" +
-            "    \"outputs\": [\n" +
-            "      {\n" +
-            "        \"internalType\": \"address\",\n" +
-            "        \"name\": \"\",\n" +
-            "        \"type\": \"address\"\n" +
-            "      }\n" +
-            "    ],\n" +
-            "    \"stateMutability\": \"view\",\n" +
-            "    \"type\": \"function\"\n" +
-            "  },\n" +
-            "  {\n" +
-            "    \"inputs\": [\n" +
-            "      {\n" +
-            "        \"internalType\": \"uint256\",\n" +
-            "        \"name\": \"gameId\",\n" +
-            "        \"type\": \"uint256\"\n" +
-            "      }\n" +
-            "    ],\n" +
-            "    \"name\": \"getGameRoom\",\n" +
-            "    \"outputs\": [\n" +
-            "      {\n" +
-            "        \"internalType\": \"contract GameRoom\",\n" +
-            "        \"name\": \"\",\n" +
-            "        \"type\": \"address\"\n" +
-            "      }\n" +
-            "    ],\n" +
-            "    \"stateMutability\": \"view\",\n" +
-            "    \"type\": \"function\"\n" +
-            "  },\n" +
-            "  {\n" +
-            "    \"inputs\": [],\n" +
-            "    \"name\": \"stakingVault\",\n" +
-            "    \"outputs\": [\n" +
-            "      {\n" +
-            "        \"internalType\": \"contract StakingVault\",\n" +
-            "        \"name\": \"\",\n" +
-            "        \"type\": \"address\"\n" +
-            "      }\n" +
-            "    ],\n" +
-            "    \"stateMutability\": \"view\",\n" +
-            "    \"type\": \"function\"\n" +
-            "  }\n" +
-            "]";
+//    public static final String GAME_FACTORY_ABI = "[\n" +
+//            "  {\n" +
+//            "    \"inputs\": [\n" +
+//            "      {\n" +
+//            "        \"internalType\": \"uint256\",\n" +
+//            "        \"name\": \"minPlayers\",\n" +
+//            "        \"type\": \"uint256\"\n" +
+//            "      },\n" +
+//            "      {\n" +
+//            "        \"internalType\": \"uint256\",\n" +
+//            "        \"name\": \"maxPlayers\",\n" +
+//            "        \"type\": \"uint256\"\n" +
+//            "      },\n" +
+//            "      {\n" +
+//            "        \"internalType\": \"uint256\",\n" +
+//            "        \"name\": \"minStake\",\n" +
+//            "        \"type\": \"uint256\"\n" +
+//            "      },\n" +
+//            "      {\n" +
+//            "        \"internalType\": \"uint256\",\n" +
+//            "        \"name\": \"maxStake\",\n" +
+//            "        \"type\": \"uint256\"\n" +
+//            "      },\n" +
+//            "      {\n" +
+//            "        \"internalType\": \"uint256\",\n" +
+//            "        \"name\": \"jokerCount\",\n" +
+//            "        \"type\": \"uint256\"\n" +
+//            "      },\n" +
+//            "      {\n" +
+//            "        \"internalType\": \"uint256[10]\",\n" +
+//            "        \"name\": \"cardCounts\",\n" +
+//            "        \"type\": \"uint256[10]\"\n" +
+//            "      }\n" +
+//            "    ],\n" +
+//            "    \"name\": \"createGameRoom\",\n" +
+//            "    \"outputs\": [\n" +
+//            "      {\n" +
+//            "        \"components\": [\n" +
+//            "          {\n" +
+//            "            \"internalType\": \"uint256\",\n" +
+//            "            \"name\": \"gameId\",\n" +
+//            "            \"type\": \"uint256\"\n" +
+//            "          },\n" +
+//            "          {\n" +
+//            "            \"internalType\": \"address\",\n" +
+//            "            \"name\": \"room\",\n" +
+//            "            \"type\": \"address\"\n" +
+//            "          }\n" +
+//            "        ],\n" +
+//            "        \"internalType\": \"struct GameFactory.CreateResult\",\n" +
+//            "        \"name\": \"\",\n" +
+//            "        \"type\": \"tuple\"\n" +
+//            "      }\n" +
+//            "    ],\n" +
+//            "    \"stateMutability\": \"nonpayable\",\n" +
+//            "    \"type\": \"function\"\n" +
+//            "  },\n" +
+//            "  {\n" +
+//            "    \"inputs\": [\n" +
+//            "      {\n" +
+//            "        \"internalType\": \"address payable\",\n" +
+//            "        \"name\": \"_stakingVault\",\n" +
+//            "        \"type\": \"address\"\n" +
+//            "      }\n" +
+//            "    ],\n" +
+//            "    \"stateMutability\": \"nonpayable\",\n" +
+//            "    \"type\": \"constructor\"\n" +
+//            "  },\n" +
+//            "  {\n" +
+//            "    \"anonymous\": false,\n" +
+//            "    \"inputs\": [\n" +
+//            "      {\n" +
+//            "        \"indexed\": true,\n" +
+//            "        \"internalType\": \"uint256\",\n" +
+//            "        \"name\": \"gameId\",\n" +
+//            "        \"type\": \"uint256\"\n" +
+//            "      },\n" +
+//            "      {\n" +
+//            "        \"indexed\": true,\n" +
+//            "        \"internalType\": \"address\",\n" +
+//            "        \"name\": \"host\",\n" +
+//            "        \"type\": \"address\"\n" +
+//            "      },\n" +
+//            "      {\n" +
+//            "        \"indexed\": true,\n" +
+//            "        \"internalType\": \"address\",\n" +
+//            "        \"name\": \"room\",\n" +
+//            "        \"type\": \"address\"\n" +
+//            "      },\n" +
+//            "      {\n" +
+//            "        \"components\": [\n" +
+//            "          {\n" +
+//            "            \"internalType\": \"uint256\",\n" +
+//            "            \"name\": \"minPlayers\",\n" +
+//            "            \"type\": \"uint256\"\n" +
+//            "          },\n" +
+//            "          {\n" +
+//            "            \"internalType\": \"uint256\",\n" +
+//            "            \"name\": \"maxPlayers\",\n" +
+//            "            \"type\": \"uint256\"\n" +
+//            "          },\n" +
+//            "          {\n" +
+//            "            \"internalType\": \"uint256\",\n" +
+//            "            \"name\": \"minStake\",\n" +
+//            "            \"type\": \"uint256\"\n" +
+//            "          },\n" +
+//            "          {\n" +
+//            "            \"internalType\": \"uint256\",\n" +
+//            "            \"name\": \"maxStake\",\n" +
+//            "            \"type\": \"uint256\"\n" +
+//            "          },\n" +
+//            "          {\n" +
+//            "            \"internalType\": \"uint256\",\n" +
+//            "            \"name\": \"jokerCount\",\n" +
+//            "            \"type\": \"uint256\"\n" +
+//            "          },\n" +
+//            "          {\n" +
+//            "            \"internalType\": \"uint256[10]\",\n" +
+//            "            \"name\": \"cardCounts\",\n" +
+//            "            \"type\": \"uint256[10]\"\n" +
+//            "          }\n" +
+//            "        ],\n" +
+//            "        \"indexed\": false,\n" +
+//            "        \"internalType\": \"struct GameRoom.GameConfig\",\n" +
+//            "        \"name\": \"cfg\",\n" +
+//            "        \"type\": \"tuple\"\n" +
+//            "      }\n" +
+//            "    ],\n" +
+//            "    \"name\": \"GameRoomCreated\",\n" +
+//            "    \"type\": \"event\"\n" +
+//            "  },\n" +
+//            "  {\n" +
+//            "    \"inputs\": [\n" +
+//            "      {\n" +
+//            "        \"internalType\": \"uint256\",\n" +
+//            "        \"name\": \"\",\n" +
+//            "        \"type\": \"uint256\"\n" +
+//            "      }\n" +
+//            "    ],\n" +
+//            "    \"name\": \"gameConfigs\",\n" +
+//            "    \"outputs\": [\n" +
+//            "      {\n" +
+//            "        \"internalType\": \"uint256\",\n" +
+//            "        \"name\": \"minPlayers\",\n" +
+//            "        \"type\": \"uint256\"\n" +
+//            "      },\n" +
+//            "      {\n" +
+//            "        \"internalType\": \"uint256\",\n" +
+//            "        \"name\": \"maxPlayers\",\n" +
+//            "        \"type\": \"uint256\"\n" +
+//            "      },\n" +
+//            "      {\n" +
+//            "        \"internalType\": \"uint256\",\n" +
+//            "        \"name\": \"minStake\",\n" +
+//            "        \"type\": \"uint256\"\n" +
+//            "      },\n" +
+//            "      {\n" +
+//            "        \"internalType\": \"uint256\",\n" +
+//            "        \"name\": \"maxStake\",\n" +
+//            "        \"type\": \"uint256\"\n" +
+//            "      },\n" +
+//            "      {\n" +
+//            "        \"internalType\": \"uint256\",\n" +
+//            "        \"name\": \"jokerCount\",\n" +
+//            "        \"type\": \"uint256\"\n" +
+//            "      }\n" +
+//            "    ],\n" +
+//            "    \"stateMutability\": \"view\",\n" +
+//            "    \"type\": \"function\"\n" +
+//            "  },\n" +
+//            "  {\n" +
+//            "    \"inputs\": [],\n" +
+//            "    \"name\": \"gameIdCounter\",\n" +
+//            "    \"outputs\": [\n" +
+//            "      {\n" +
+//            "        \"internalType\": \"uint256\",\n" +
+//            "        \"name\": \"\",\n" +
+//            "        \"type\": \"uint256\"\n" +
+//            "      }\n" +
+//            "    ],\n" +
+//            "    \"stateMutability\": \"view\",\n" +
+//            "    \"type\": \"function\"\n" +
+//            "  },\n" +
+//            "  {\n" +
+//            "    \"inputs\": [\n" +
+//            "      {\n" +
+//            "        \"internalType\": \"uint256\",\n" +
+//            "        \"name\": \"\",\n" +
+//            "        \"type\": \"uint256\"\n" +
+//            "      }\n" +
+//            "    ],\n" +
+//            "    \"name\": \"gameRooms\",\n" +
+//            "    \"outputs\": [\n" +
+//            "      {\n" +
+//            "        \"internalType\": \"address\",\n" +
+//            "        \"name\": \"\",\n" +
+//            "        \"type\": \"address\"\n" +
+//            "      }\n" +
+//            "    ],\n" +
+//            "    \"stateMutability\": \"view\",\n" +
+//            "    \"type\": \"function\"\n" +
+//            "  },\n" +
+//            "  {\n" +
+//            "    \"inputs\": [\n" +
+//            "      {\n" +
+//            "        \"internalType\": \"uint256\",\n" +
+//            "        \"name\": \"gameId\",\n" +
+//            "        \"type\": \"uint256\"\n" +
+//            "      }\n" +
+//            "    ],\n" +
+//            "    \"name\": \"getGameRoom\",\n" +
+//            "    \"outputs\": [\n" +
+//            "      {\n" +
+//            "        \"internalType\": \"contract GameRoom\",\n" +
+//            "        \"name\": \"\",\n" +
+//            "        \"type\": \"address\"\n" +
+//            "      }\n" +
+//            "    ],\n" +
+//            "    \"stateMutability\": \"view\",\n" +
+//            "    \"type\": \"function\"\n" +
+//            "  },\n" +
+//            "  {\n" +
+//            "    \"inputs\": [],\n" +
+//            "    \"name\": \"stakingVault\",\n" +
+//            "    \"outputs\": [\n" +
+//            "      {\n" +
+//            "        \"internalType\": \"contract StakingVault\",\n" +
+//            "        \"name\": \"\",\n" +
+//            "        \"type\": \"address\"\n" +
+//            "      }\n" +
+//            "    ],\n" +
+//            "    \"stateMutability\": \"view\",\n" +
+//            "    \"type\": \"function\"\n" +
+//            "  }\n" +
+//            "]";
 
 
 }

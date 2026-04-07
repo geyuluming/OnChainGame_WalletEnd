@@ -664,6 +664,11 @@ public class ABIUtils {
         return selector("stakingVault()");
     }
 
+    /** GameFactory.gameIdCounter() */
+    public static String encodeFactoryGameIdCounter() {
+        return selector("gameIdCounter()");
+    }
+
     // ====================== Game: Decode ======================
 
     public static BigInteger decodeUint256(String hexData, int index) {
