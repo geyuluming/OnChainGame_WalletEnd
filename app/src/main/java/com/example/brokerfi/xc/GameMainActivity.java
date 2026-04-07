@@ -30,7 +30,9 @@ public class GameMainActivity extends AppCompatActivity {
     private Button btnCreateGame, btnJoinGame;
     private static final BigInteger GAS_FALLBACK = new BigInteger("800000", 16);
     private static final BigInteger GAS_BUFFER_BPS = BigInteger.valueOf(12_000L); // +20%
-    private static final boolean USE_RAW_TX = true;
+    // BrokerChain 钱包/白皮书示例主要使用 eth_sendTransaction。
+    // eth_sendRawTransaction 在某些网关/节点上可能被吞返回（只回 jsonrpc/id），因此仅作为兜底。
+    private static final boolean USE_RAW_TX = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -259,7 +261,143 @@ public class GameMainActivity extends AppCompatActivity {
             txParams.put("value", "0x0"); // 创建游戏无需质押
             // 先不直接写死 gas：先 estimateGas，失败时再 fallback
 
-            // 6. estimateGas：很多节点会在此返回更具体的 revert 信息
+            // 6. 关键前置检查：
+            // - GameFactory.stakingVault() 必须与配置的 STAKING_VAULT_ADDRESS 一致，否则 createGameRoom 内部 registerGameRoom 会打到另一个 Vault 并 revert
+            // - Vault.factory() 必须指向这个 GameFactory，否则 Vault.registerGameRoom 会 revert("only factory")
+            precheckFactoryAndVaultThenEstimateAndSend(txParams);
+        } catch (Exception e) {
+            Log.e(TAG, "创建游戏整体异常：", e);
+            Toast.makeText(this, "参数错误：" + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void precheckFactoryAndVaultThenEstimateAndSend(JSONObject txParams) {
+        try {
+            String from = txParams.optString("from", "");
+            // 1) 读 GameFactory.stakingVault()
+            JSONObject callParams = new JSONObject();
+            callParams.put("from", from);
+            callParams.put("to", GameConfig.GAME_FACTORY_ADDRESS);
+            callParams.put("data", ABIUtils.encodeFactoryStakingVault());
+            callParams.put("value", "0x0");
+
+            JSONArray params = new JSONArray();
+            params.put(callParams);
+            params.put("latest");
+
+            JSONObject req = new JSONObject();
+            req.put("jsonrpc", "2.0");
+            req.put("method", "eth_call");
+            req.put("params", params);
+            req.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, req.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        if (res.has("error")) {
+                            String err = formatRpcError(res.optJSONObject("error"));
+                            Log.e(TAG, "读取 GameFactory.stakingVault 失败：" + err);
+                            runOnUiThread(() -> Toast.makeText(GameMainActivity.this, "读取工厂配置失败：" + err, Toast.LENGTH_LONG).show());
+                            return;
+                        }
+                        String vaultFromFactory = ABIUtils.decodeAddress(res.optString("result", "0x"));
+                        if (vaultFromFactory == null) vaultFromFactory = "";
+                        Log.i(TAG, "GameFactory.stakingVault=" + vaultFromFactory + " config.vault=" + GameConfig.STAKING_VAULT_ADDRESS);
+                        if (!vaultFromFactory.equalsIgnoreCase(GameConfig.STAKING_VAULT_ADDRESS)) {
+                            String msg = "合约地址不匹配：GameFactory 绑定的 Vault=" + vaultFromFactory
+                                    + "，但配置里是 " + GameConfig.STAKING_VAULT_ADDRESS
+                                    + "。请更新 GameConfig.STAKING_VAULT_ADDRESS 或重新部署匹配的一组合约。";
+                            Log.e(TAG, msg);
+                            runOnUiThread(() -> Toast.makeText(GameMainActivity.this, msg, Toast.LENGTH_LONG).show());
+                            return;
+                        }
+
+                        // 2) 读 Vault.factory()
+                        precheckVaultFactoryThenEstimateAndSend(txParams);
+                    } catch (Exception e) {
+                        Log.e(TAG, "解析 GameFactory.stakingVault 异常", e);
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    Log.e(TAG, "读取 GameFactory.stakingVault 网络错误", e);
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "precheckFactoryAndVaultThenEstimateAndSend 异常", e);
+        }
+    }
+
+    private void precheckVaultFactoryThenEstimateAndSend(JSONObject txParams) {
+        try {
+            String from = txParams.optString("from", "");
+            String data = ABIUtils.encodeVaultFactory();
+
+            JSONObject callParams = new JSONObject();
+            callParams.put("from", from);
+            callParams.put("to", GameConfig.STAKING_VAULT_ADDRESS);
+            callParams.put("data", data);
+            callParams.put("value", "0x0");
+
+            JSONArray params = new JSONArray();
+            params.put(callParams);
+            params.put("latest");
+
+            JSONObject req = new JSONObject();
+            req.put("jsonrpc", "2.0");
+            req.put("method", "eth_call");
+            req.put("params", params);
+            req.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, req.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        if (res.has("error")) {
+                            String err = formatRpcError(res.optJSONObject("error"));
+                            Log.e(TAG, "读取 Vault.factory 失败：" + err);
+                            runOnUiThread(() -> Toast.makeText(GameMainActivity.this, "读取金库配置失败：" + err, Toast.LENGTH_LONG).show());
+                            return;
+                        }
+
+                        String factoryAddr = ABIUtils.decodeAddress(res.optString("result", "0x"));
+                        Log.i(TAG, "Vault.factory=" + factoryAddr + " expected=" + GameConfig.GAME_FACTORY_ADDRESS);
+                        if (factoryAddr == null || !factoryAddr.equalsIgnoreCase(GameConfig.GAME_FACTORY_ADDRESS)) {
+                            String msg = "金库未授权该工厂：Vault.factory=" + factoryAddr
+                                    + "，需要为 " + GameConfig.GAME_FACTORY_ADDRESS
+                                    + "。请用 feeReceiver 调用 StakingVault.setFactory(GameFactory)。";
+                            Log.e(TAG, msg);
+                            runOnUiThread(() -> Toast.makeText(GameMainActivity.this, msg, Toast.LENGTH_LONG).show());
+                            // 顺便打出 feeReceiver 提示
+                            queryVaultFeeReceiverForHint();
+                            return;
+                        }
+
+                        estimateAndSend(txParams);
+                    } catch (Exception e) {
+                        Log.e(TAG, "解析 Vault.factory 异常", e);
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    Log.e(TAG, "读取 Vault.factory 网络错误", e);
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "precheckVaultFactoryThenEstimateAndSend 异常", e);
+        }
+    }
+
+    private void estimateAndSend(JSONObject txParams) {
+        try {
+            // estimateGas：很多节点会在此返回更具体的 revert 信息
             JSONObject estimateReq = new JSONObject();
             estimateReq.put("jsonrpc", "2.0");
             estimateReq.put("method", "eth_estimateGas");
@@ -285,33 +423,15 @@ public class GameMainActivity extends AppCompatActivity {
 
                         String gasHex = estimateRes.optString("result", null);
                         BigInteger estimated = gasHex == null ? BigInteger.ZERO : new BigInteger(gasHex.substring(2), 16);
-                        BigInteger gasToUse = (estimated.compareTo(BigInteger.ZERO) > 0)
-                                ? addGasBuffer(estimated)
-                                : GAS_FALLBACK;
+                        BigInteger buffered = (estimated.compareTo(BigInteger.ZERO) > 0) ? addGasBuffer(estimated) : BigInteger.ZERO;
+                        // 合约包含 new GameRoom（部署）+ 多次 SSTORE + 外部调用，部分节点 estimateGas 偏低。
+                        // 为避免 OOG 被包装成 execution reverted，gas 取 max(buffered, fallback)。
+                        BigInteger gasToUse = buffered.max(GAS_FALLBACK);
                         txParams.put("gas", "0x" + gasToUse.toString(16));
                         Log.i(TAG, "estimateGas=" + estimated + " 使用 gas=" + gasToUse);
 
-                        // 7. eth_call 预演（部分节点只在 call 返回更全的 revert data）
-                        // 注意：eth_call 对 nonpayable 也可执行模拟，但不会落链
-                        JSONObject callReqLatest = buildEthCallRequest(txParams, "latest");
-                        JSONObject callReqPending = buildEthCallRequest(txParams, "pending");
-                        Log.i(TAG, "RPC eth_call(latest) 请求体：" + callReqLatest.toString());
-                        Log.i(TAG, "RPC eth_call(pending) 请求体：" + callReqPending.toString());
-
-                        OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, callReqLatest.toString(), new MyCallBack() {
-                            @Override
-                            public void onSuccess(String callLatestResult) {
-                                handleCallThenSend(txParams, callLatestResult, callReqPending);
-                            }
-
-                            @Override
-                            public Void onError(Exception e) {
-                                // eth_call 失败不拦截（部分节点未实现 pending/latest），继续尝试发送交易
-                                Log.e(TAG, "eth_call(latest) 网络错误，继续尝试发送交易", e);
-                                sendCreateTx(txParams);
-                                return null;
-                            }
-                        });
+                        // BrokerChain 本地节点对写方法 eth_call 会返回 write protection，这里不再阻塞，直接发送
+                        sendCreateTx(txParams);
                     } catch (Exception e) {
                         Log.e(TAG, "estimateGas 解析异常", e);
                         runOnUiThread(() -> Toast.makeText(GameMainActivity.this, "estimateGas 解析失败：" + e.getMessage(), Toast.LENGTH_SHORT).show());
@@ -321,53 +441,12 @@ public class GameMainActivity extends AppCompatActivity {
                 @Override
                 public Void onError(Exception e) {
                     Log.e(TAG, "estimateGas 网络错误", e);
-                    // estimateGas 不可用时仍尝试发交易（使用 fallback gas）
-                    try {
-                        txParams.put("gas", "0x" + GAS_FALLBACK.toString(16));
-                        JSONArray sendParams = new JSONArray();
-                        sendParams.put(txParams);
-                        JSONObject sendReq = new JSONObject();
-                        sendReq.put("jsonrpc", "2.0");
-                        sendReq.put("method", "eth_sendTransaction");
-                        sendReq.put("params", sendParams);
-                        sendReq.put("id", RequestIdGenerator.getNextId());
-
-                        OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, sendReq.toString(), new MyCallBack() {
-                            @Override
-                            public void onSuccess(String result) {
-                                Log.d(TAG, "sendTransaction（fallback gas）响应：" + result);
-                                try {
-                                    JSONObject response = new JSONObject(result);
-                                    if (response.has("result")) {
-                                        String txHash = response.getString("result");
-                                        Log.i(TAG, "创建交易已提交（fallback gas）：" + txHash);
-                                        queryGameRoomInfo(txHash);
-                                        runOnUiThread(() -> Toast.makeText(GameMainActivity.this, "已提交创建交易：" + txHash, Toast.LENGTH_LONG).show());
-                                    } else {
-                                        String err = formatRpcError(response.optJSONObject("error"));
-                                        Log.e(TAG, "创建失败（fallback gas）：" + err);
-                                        runOnUiThread(() -> Toast.makeText(GameMainActivity.this, "创建失败：" + err, Toast.LENGTH_LONG).show());
-                                    }
-                                } catch (Exception ex) {
-                                    Log.e(TAG, "解析创建结果异常（fallback gas）", ex);
-                                }
-                            }
-
-                            @Override
-                            public Void onError(Exception e2) {
-                                runOnUiThread(() -> Toast.makeText(GameMainActivity.this, "网络错误：" + e2.getMessage(), Toast.LENGTH_SHORT).show());
-                                return null;
-                            }
-                        });
-                    } catch (Exception ex) {
-                        runOnUiThread(() -> Toast.makeText(GameMainActivity.this, "网络错误：" + e.getMessage(), Toast.LENGTH_SHORT).show());
-                    }
+                    runOnUiThread(() -> Toast.makeText(GameMainActivity.this, "estimateGas 网络错误：" + e.getMessage(), Toast.LENGTH_SHORT).show());
                     return null;
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "创建游戏整体异常：", e);
-            Toast.makeText(this, "参数错误：" + e.getMessage(), Toast.LENGTH_SHORT).show();
+            Log.e(TAG, "estimateAndSend 异常", e);
         }
     }
 
@@ -638,6 +717,9 @@ public class GameMainActivity extends AppCompatActivity {
                                                                 runOnUiThread(() -> Toast.makeText(GameMainActivity.this, "发送失败：" + toastErr, Toast.LENGTH_LONG).show());
                                                                 // 额外探测：看看节点是否真的支持 eth_sendRawTransaction
                                                                 probeRpcCapabilities();
+                                                                // 如果 rawTx 返回被吞/不支持，则回退到 eth_sendTransaction（至少能拿到明确的 revert）
+                                                                Log.w(TAG, "sendRawTransaction 无有效返回，回退 eth_sendTransaction");
+                                                                sendCreateTx(txParams);
                                                             }
                                                         } catch (Exception e) {
                                                             Log.e(TAG, "解析 sendRawTransaction 返回失败", e);

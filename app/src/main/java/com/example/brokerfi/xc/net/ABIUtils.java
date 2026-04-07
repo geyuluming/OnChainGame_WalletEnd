@@ -657,6 +657,13 @@ public class ABIUtils {
         return selector("feeReceiver()");
     }
 
+    // ====================== Factory: Encode ======================
+
+    /** GameFactory.stakingVault() */
+    public static String encodeFactoryStakingVault() {
+        return selector("stakingVault()");
+    }
+
     // ====================== Game: Decode ======================
 
     public static BigInteger decodeUint256(String hexData, int index) {
