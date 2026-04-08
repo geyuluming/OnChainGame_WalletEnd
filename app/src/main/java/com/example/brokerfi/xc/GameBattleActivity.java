@@ -23,6 +23,7 @@ import com.example.brokerfi.xc.net.RequestIdGenerator;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.math.BigInteger;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -56,6 +57,8 @@ public class GameBattleActivity extends AppCompatActivity {
     private volatile int refreshSeq = 0;
 
     private final Map<String, PlayerHandCache> handCache = new HashMap<>();
+    private final ArrayDeque<String> logLines = new ArrayDeque<>();
+    private static final int MAX_LOG_LINES = 120;
 
     private static final class PlayerHandCache {
         BigInteger[] hand10 = new BigInteger[10];
@@ -809,7 +812,18 @@ public class GameBattleActivity extends AppCompatActivity {
 
     private void appendLog(String text) {
         Log.i(TAG, text);
-        runOnUiThread(() -> tvLog.setText(tvLog.getText() + "\n" + text));
+        runOnUiThread(() -> {
+            logLines.addLast(text);
+            while (logLines.size() > MAX_LOG_LINES) {
+                logLines.removeFirst();
+            }
+            StringBuilder sb = new StringBuilder();
+            for (String line : logLines) {
+                if (sb.length() > 0) sb.append('\n');
+                sb.append(line);
+            }
+            tvLog.setText(sb.toString());
+        });
     }
 
     private String getCurrentWalletAddress() {
