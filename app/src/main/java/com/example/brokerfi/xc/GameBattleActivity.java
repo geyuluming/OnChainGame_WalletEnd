@@ -47,6 +47,11 @@ public class GameBattleActivity extends AppCompatActivity {
     private String currentTargetPlayer = "";
     private boolean isPolling = true;
     private boolean gameOver = false;
+    private volatile boolean isSendingTake = false;
+    // 为了避免 eth_call 轮询过快导致刷新手牌链路被不断打断，
+    // 增加锁：刷新期间不再触发新的 queryTakeTarget 刷新。
+    private volatile boolean isRefreshingHands = false;
+    private volatile long refreshHandsStartedAtMs = 0L;
     /** 丢弃过期的异步刷新链，避免轮询重叠导致 UI 错乱 */
     private volatile int refreshSeq = 0;
 
@@ -102,8 +107,18 @@ public class GameBattleActivity extends AppCompatActivity {
         @Override
         public void run() {
             if (!isPolling) return;
-            pollTurnAndCards();
-            queryGameResult();
+            // 看门狗：如果刷新手牌卡住很久，允许继续轮询（避免“永远加载中”）
+            if (isRefreshingHands) {
+                long now = System.currentTimeMillis();
+                if (now - refreshHandsStartedAtMs > 20_000L) {
+                    Log.w(TAG, "手牌刷新超时，解除刷新锁以继续轮询");
+                    isRefreshingHands = false;
+                }
+            }
+            if (!isRefreshingHands) {
+                pollTurnAndCards();
+                queryGameResult();
+            }
             handler.postDelayed(this, 3000);
         }
     };
@@ -178,6 +193,8 @@ public class GameBattleActivity extends AppCompatActivity {
                         JSONObject res = new JSONObject(result);
                         currentTargetPlayer = ABIUtils.decodeAddress(res.optString("result", "0x"));
                         runOnUiThread(() -> updateTargetHint());
+                        isRefreshingHands = true;
+                        refreshHandsStartedAtMs = System.currentTimeMillis();
                         final int seq = ++refreshSeq;
                         refreshAllPlayerHandsSequentially(0, seq);
                     } catch (Exception e) {
@@ -320,7 +337,10 @@ public class GameBattleActivity extends AppCompatActivity {
     }
 
     private void rebuildAllHandsUi() {
-        if (gameOver) return;
+        if (gameOver) {
+            isRefreshingHands = false;
+            return;
+        }
         llOpponents.removeAllViews();
         llMyHand.removeAllViews();
 
@@ -375,6 +395,8 @@ public class GameBattleActivity extends AppCompatActivity {
                 llMyHand.addView(createCardFrontView(cardNum));
             }
         }
+        // 刷新链完成，释放锁
+        isRefreshingHands = false;
     }
 
     private int dp(int d) {
@@ -400,14 +422,11 @@ public class GameBattleActivity extends AppCompatActivity {
         fl.addView(tv, tlp);
 
         fl.setAlpha(clickable ? 1f : 0.88f);
-        if (clickable) {
-            fl.setOnClickListener(v -> {
-                pulseView(v);
-                onOpponentCardBackClicked(ownerAddr, slotIndex, cardNumber);
-            });
-        } else {
-            fl.setClickable(false);
-        }
+        // 始终接收点击：即便当前不可抽，也给出明确提示，避免“点击没反应”的体验。
+        fl.setOnClickListener(v -> {
+            pulseView(v);
+            onOpponentCardBackClicked(ownerAddr, slotIndex, cardNumber);
+        });
         return fl;
     }
 
@@ -424,24 +443,38 @@ public class GameBattleActivity extends AppCompatActivity {
     }
 
     private void onOpponentCardBackClicked(String ownerAddr, int slotIndex, int cardNumber) {
-        if (gameOver) return;
+        if (gameOver) {
+            Toast.makeText(this, "本局已结束，无法再抽牌", Toast.LENGTH_SHORT).show();
+            appendLog("点击抽牌被拦截：gameOver=true");
+            return;
+        }
+        if (isSendingTake) {
+            Toast.makeText(this, "正在抽牌中，请稍等", Toast.LENGTH_SHORT).show();
+            return;
+        }
         if (!myAddress.equalsIgnoreCase(currentTurnPlayer)) {
             Toast.makeText(this, "还没轮到你", Toast.LENGTH_SHORT).show();
+            appendLog("点击抽牌被拦截：!turn，currentTurn=" + shortAddr(currentTurnPlayer) + ", me=" + shortAddr(myAddress));
             return;
         }
         if (!ownerAddr.equalsIgnoreCase(currentTargetPlayer)) {
             Toast.makeText(this, "只能抽下家的牌", Toast.LENGTH_SHORT).show();
+            appendLog("点击抽牌被拦截：!target，clicked=" + shortAddr(ownerAddr) + ", target=" + shortAddr(currentTargetPlayer));
             return;
         }
         PlayerHandCache c = cacheFor(ownerAddr);
         if (c == null || slotIndex < 0 || slotIndex >= c.order.size()) {
             Toast.makeText(this, "手牌数据未就绪", Toast.LENGTH_SHORT).show();
+            appendLog("点击抽牌被拦截：cache未就绪或slot越界，slot=" + slotIndex);
             return;
         }
         if (c.order.get(slotIndex) != cardNumber) {
             Toast.makeText(this, "请重试", Toast.LENGTH_SHORT).show();
+            appendLog("点击抽牌被拦截：slot/card不一致，slot=" + slotIndex + ", expect=" + c.order.get(slotIndex) + ", got=" + cardNumber);
             return;
         }
+        isSendingTake = true;
+        appendLog("点击抽牌：target=" + shortAddr(ownerAddr) + ", slot=" + slotIndex + ", card=" + cardNumber);
         sendTakeCard(ownerAddr, cardNumber);
     }
 
@@ -465,6 +498,7 @@ public class GameBattleActivity extends AppCompatActivity {
                 String pk = StorageUtil.getCurrentPrivatekey(this);
                 if (pk == null || pk.trim().isEmpty()) {
                     appendLog("无当前私钥，无法走网关抽牌");
+                    isSendingTake = false;
                     return;
                 }
                 new Thread(() -> {
@@ -481,6 +515,7 @@ public class GameBattleActivity extends AppCompatActivity {
                         } else {
                             appendLog("抽牌失败（网关）：" + MyUtil.formatGatewayError(json));
                         }
+                        isSendingTake = false;
                     });
                 }).start();
                 return;
@@ -506,19 +541,23 @@ public class GameBattleActivity extends AppCompatActivity {
                                     : res.optJSONObject("error").optString("message", "unknown");
                             appendLog("抽牌失败：" + err);
                         }
+                        isSendingTake = false;
                     } catch (Exception e) {
                         appendLog("抽牌返回解析失败：" + e.getMessage());
+                        isSendingTake = false;
                     }
                 }
 
                 @Override
                 public Void onError(Exception e) {
                     appendLog("抽牌网络错误：" + e.getMessage());
+                    isSendingTake = false;
                     return null;
                 }
             });
         } catch (Exception e) {
             appendLog("抽牌调用失败：" + e.getMessage());
+            isSendingTake = false;
         }
     }
 
