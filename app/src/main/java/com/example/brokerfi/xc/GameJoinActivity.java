@@ -172,6 +172,38 @@ public class GameJoinActivity extends AppCompatActivity {
             txParams.put("value", "0x" + stakeAmount.toString(16)); // 质押金额
             txParams.put("gas", "0x800000"); // 提高gas上限
 
+            if (GameConfig.USE_HTTP_GATEWAY_FOR_GAME_TX) {
+                String pk = StorageUtil.getCurrentPrivatekey(this);
+                if (pk == null || pk.trim().isEmpty()) {
+                    Toast.makeText(this, "未找到当前账户私钥", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                final String expectedFrom = txParams.optString("from", "");
+                new Thread(() -> {
+                    String json = MyUtil.sendGameContractTxViaGateway(
+                            pk.trim(),
+                            roomAddress,
+                            data,
+                            "0x" + stakeAmount.toString(16),
+                            "0x800000");
+                    String txHash = MyUtil.parseGatewayTxHash(json);
+                    runOnUiThread(() -> {
+                        if (txHash != null) {
+                            Log.i(TAG, "✅ 加入游戏（网关）提交成功！Hash：" + txHash);
+                            verifyTxFrom(txHash, expectedFrom);
+                            Toast.makeText(GameJoinActivity.this, "加入游戏交易已提交！Hash：" + txHash, Toast.LENGTH_LONG).show();
+                            Intent intent = new Intent(GameJoinActivity.this, GameRoomWaitActivity.class);
+                            intent.putExtra("gameId", gameId.toString());
+                            intent.putExtra("roomAddress", roomAddress);
+                            startActivity(intent);
+                        } else {
+                            Toast.makeText(GameJoinActivity.this, "加入失败：" + MyUtil.formatGatewayError(json), Toast.LENGTH_LONG).show();
+                        }
+                    });
+                }).start();
+                return;
+            }
+
             if (USE_RAW_TX) {
                 sendJoinTxRawSigned(txParams, txHash -> {
                     String expectedFrom = txParams.optString("from", "");
@@ -185,8 +217,10 @@ public class GameJoinActivity extends AppCompatActivity {
                         startActivity(intent);
                     });
                 }, () -> {
-                    Log.w(TAG, "rawTx 发送失败，回退 eth_sendTransaction（可能被节点默认账户代发）");
-                    sendJoinTxBySendTransaction(txParams, gameId, roomAddress);
+                    Log.e(TAG, "rawTx 发送失败，已停止（避免节点默认账户代发）");
+                    runOnUiThread(() -> Toast.makeText(GameJoinActivity.this,
+                            "rawTx 不可用；可开启 GameConfig.USE_HTTP_GATEWAY_FOR_GAME_TX 走网关",
+                            Toast.LENGTH_LONG).show());
                 });
                 return;
             }

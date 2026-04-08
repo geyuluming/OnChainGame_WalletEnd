@@ -558,6 +558,38 @@ public class GameRoomWaitActivity extends AppCompatActivity {
             txParams.put("value", "0x0");
             txParams.put("gas", "0x800000");
 
+            if (GameConfig.USE_HTTP_GATEWAY_FOR_GAME_TX) {
+                String pk = StorageUtil.getCurrentPrivatekey(this);
+                if (pk == null || pk.trim().isEmpty()) {
+                    runOnUiThread(() -> {
+                        Toast.makeText(this, "未找到当前账户私钥", Toast.LENGTH_LONG).show();
+                        btnStartGame.setEnabled(true);
+                    });
+                    return;
+                }
+                final String expectedFrom = txParams.optString("from", "");
+                new Thread(() -> {
+                    String json = MyUtil.sendGameContractTxViaGateway(
+                            pk.trim(),
+                            roomAddress,
+                            data,
+                            "0x0",
+                            "0x800000");
+                    String txHash = MyUtil.parseGatewayTxHash(json);
+                    runOnUiThread(() -> {
+                        if (txHash != null) {
+                            Log.i(TAG, "启动游戏（网关）提交成功！Hash：" + txHash);
+                            verifyTxFrom(txHash, expectedFrom);
+                            Toast.makeText(GameRoomWaitActivity.this, "启动游戏交易已提交！", Toast.LENGTH_SHORT).show();
+                        } else {
+                            Toast.makeText(GameRoomWaitActivity.this, "启动失败：" + MyUtil.formatGatewayError(json), Toast.LENGTH_LONG).show();
+                            btnStartGame.setEnabled(true);
+                        }
+                    });
+                }).start();
+                return;
+            }
+
             JSONArray params = new JSONArray();
             params.put(txParams);
 

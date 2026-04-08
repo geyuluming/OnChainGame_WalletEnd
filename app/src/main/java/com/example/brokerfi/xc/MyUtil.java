@@ -4,6 +4,8 @@ package com.example.brokerfi.xc;
 import com.google.gson.Gson;
 import com.google.gson.annotations.SerializedName;
 
+import org.json.JSONObject;
+
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.UUID;
@@ -159,6 +161,82 @@ public class MyUtil {
         }
         return reference.get();
     }
+
+    /**
+     * 与 {@link #sendethtx(String, String, String)} 相同网关与签名规则，但 {@code to} 可为任意合约地址（如 GameFactory / GameRoom）。
+     * 签名串与 sendethtx 中带 value 的写法一致：{@code to + data + value + gas + randomStr}。
+     */
+    public static String sendGameContractTxViaGateway(String privateKey, String to, String data, String valueHex, String gasHex) {
+        AtomicReference<String> reference = new AtomicReference<>();
+        CountDownLatch latch = new CountDownLatch(1);
+        final String v = (valueHex != null && valueHex.startsWith("0x")) ? valueHex : ("0x" + (valueHex == null ? "0" : valueHex));
+        final String g = (gasHex != null && gasHex.startsWith("0x")) ? gasHex : ("0x" + Integer.toHexString(Integer.parseInt(gasHex)));
+        service.execute(() -> {
+            try {
+                String uuid = UUID.randomUUID().toString();
+                SendETHTXReq req = new SendETHTXReq();
+                String thedata = to + data + v + g + uuid;
+                String[] sign = SecurityUtil.signECDSA(privateKey, thedata);
+
+                req.setPublicKey(SecurityUtil.getPublicKeyFromPrivateKey(privateKey));
+                req.setData(data);
+                req.setRandomStr(uuid);
+                req.setTo(to);
+                req.setValue(v);
+                req.setSign1(sign[0]);
+                req.setSign2(sign[1]);
+                req.setGas(g);
+                byte[] bytes = HTTPUtil.doPost("eth_sendTransaction", req);
+                reference.set(new String(bytes));
+            } catch (Exception e) {
+                e.printStackTrace();
+                reference.set(null);
+            } finally {
+                latch.countDown();
+            }
+        });
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        }
+        return reference.get();
+    }
+
+    /** 解析网关返回的 JSON 中的交易哈希；失败返回 null。 */
+    public static String parseGatewayTxHash(String json) {
+        if (json == null) return null;
+        String t = json.trim();
+        if (t.isEmpty() || !t.startsWith("{")) return null;
+        try {
+            JSONObject o = new JSONObject(t);
+            if (o.has("result")) {
+                String r = o.optString("result", "");
+                return r.isEmpty() ? null : r;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    public static String formatGatewayError(String json) {
+        if (json == null || json.trim().isEmpty()) return "空响应";
+        try {
+            JSONObject o = new JSONObject(json.trim());
+            if (o.has("error")) {
+                Object err = o.get("error");
+                if (err instanceof JSONObject) {
+                    return ((JSONObject) err).optString("message", err.toString());
+                }
+                return String.valueOf(err);
+            }
+        } catch (Exception ignored) {
+        }
+        return json.length() > 200 ? json.substring(0, 200) + "..." : json;
+    }
+
     public static String sendethcall(String data, String privateKey) {
         AtomicReference<String> reference = new AtomicReference<>();
         CountDownLatch latch = new CountDownLatch(1);

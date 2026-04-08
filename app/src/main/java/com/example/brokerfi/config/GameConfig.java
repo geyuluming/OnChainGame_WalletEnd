@@ -5,6 +5,7 @@ import java.math.BigInteger;
 public class GameConfig {
     // BrokerChain测试网RPC地址（从钱包浏览器URL获取）
     public static final String BROKERCHAIN_RPC = "http://192.168.1.13:36944";
+    //public static final String BROKERCHAIN_RPC = "dash.broker-chain.com";
 
     // 部署后的合约地址（替换为实际部署地址）
     public static final String STAKING_VAULT_ADDRESS = "0xA5Bb3909C92e4371946a862C3096128a0C9bb25b";
@@ -28,6 +29,13 @@ public class GameConfig {
      * 满员后发 {@code ECVRFRandomRequested}，链下对 abi.encode(gameId, room) 做 Prove 后由 relayer 调 relay.submitRandomWord。
      */
     public static final String ECVRF_RELAY_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+    /**
+     * 若为 true：游戏「写交易」走与首页转账/NFT 相同的 BrokerChain HTTPS 网关（ECDSA + {@code eth_sendTransaction}），
+     * 使用当前选中账户私钥，链上 from 与钱包一致。需保证下方合约地址部署在网关所连链上。
+     * 仅连本地 RPC、合约未部署在官方链时，请保持 false。
+     */
+    public static final boolean USE_HTTP_GATEWAY_FOR_GAME_TX = true;
 
     // 合约ABI
 //    public static final String GAME_FACTORY_ABI = "[\n" +

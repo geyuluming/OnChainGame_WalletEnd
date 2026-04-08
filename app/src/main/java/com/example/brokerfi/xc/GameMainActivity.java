@@ -14,6 +14,7 @@ import com.example.brokerfi.xc.net.MyCallBack;
 import com.example.brokerfi.xc.net.OkhttpUtils;
 import com.example.brokerfi.xc.net.RequestIdGenerator;
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 import java.math.BigInteger;
 import java.math.BigDecimal;
@@ -30,9 +31,9 @@ public class GameMainActivity extends AppCompatActivity {
     private Button btnCreateGame, btnJoinGame;
     private static final BigInteger GAS_FALLBACK = new BigInteger("800000", 16);
     private static final BigInteger GAS_BUFFER_BPS = BigInteger.valueOf(12_000L); // +20%
-    // 关键：使用本地私钥签名 + eth_sendRawTransaction，才能保证“当前钱包地址”真正成为链上 from/host。
-    // 否则很多节点会忽略 eth_sendTransaction 的 from，改用节点默认解锁账户代发，导致 host 永远是跑节点的地址。
-    private static final boolean USE_RAW_TX = true;
+    // true：本地 Web3j 签名 + eth_sendRawTransaction（需节点正确返回 txHash；若只回 {"jsonrpc","id"} 请改 false 或开网关）。
+    // false：直连 eth_sendTransaction（部分节点会忽略 from，仅适合确认合约能否上链）。
+    private static final boolean USE_RAW_TX = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -640,6 +641,10 @@ public class GameMainActivity extends AppCompatActivity {
 
     private void sendCreateTx(JSONObject txParams) {
         try {
+            if (GameConfig.USE_HTTP_GATEWAY_FOR_GAME_TX) {
+                sendCreateTxBrokerGateway(txParams);
+                return;
+            }
             if (USE_RAW_TX) {
                 sendCreateTxRawSigned(txParams);
                 return;
@@ -698,6 +703,46 @@ public class GameMainActivity extends AppCompatActivity {
             Log.e(TAG, "sendCreateTx 构造/发送异常", e);
             runOnUiThread(() -> Toast.makeText(GameMainActivity.this, "发送失败：" + e.getMessage(), Toast.LENGTH_SHORT).show());
         }
+    }
+
+    /** 与转账/NFT 相同：HTTPS 网关 + 当前账户 ECDSA，避免本地节点忽略 from。 */
+    private void sendCreateTxBrokerGateway(JSONObject txParams) {
+        String pk = StorageUtil.getCurrentPrivatekey(this);
+        if (pk == null || pk.trim().isEmpty()) {
+            Toast.makeText(this, "未找到当前账户私钥", Toast.LENGTH_LONG).show();
+            return;
+        }
+        try {
+            if (!txParams.has("gas") || txParams.optString("gas", "").isEmpty()) {
+                txParams.put("gas", "0x" + GAS_FALLBACK.toString(16));
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "设置 gas 失败", e);
+            Toast.makeText(this, "构造交易参数失败", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final String expectedFrom = txParams.optString("from", "");
+        new Thread(() -> {
+            String json = MyUtil.sendGameContractTxViaGateway(
+                    pk.trim(),
+                    txParams.optString("to"),
+                    txParams.optString("data"),
+                    txParams.optString("value", "0x0"),
+                    txParams.optString("gas"));
+            String txHash = MyUtil.parseGatewayTxHash(json);
+            runOnUiThread(() -> {
+                if (txHash != null) {
+                    Log.i(TAG, "网关创建游戏提交成功！Hash：" + txHash);
+                    verifyTxFrom(txHash, expectedFrom, "createGameGateway");
+                    queryGameRoomInfo(txHash);
+                    Toast.makeText(GameMainActivity.this, "创建游戏交易已提交！", Toast.LENGTH_LONG).show();
+                } else {
+                    String err = MyUtil.formatGatewayError(json);
+                    Log.e(TAG, "网关创建失败：" + err);
+                    Toast.makeText(GameMainActivity.this, "创建失败：" + err, Toast.LENGTH_LONG).show();
+                }
+            });
+        }).start();
     }
 
     /**
@@ -851,12 +896,13 @@ public class GameMainActivity extends AppCompatActivity {
                                                                 }
                                                                 Log.e(TAG, "sendRawTransaction 失败：" + err);
                                                                 final String toastErr = err;
-                                                                runOnUiThread(() -> Toast.makeText(GameMainActivity.this, "发送失败：" + toastErr, Toast.LENGTH_LONG).show());
-                                                                // 额外探测：看看节点是否真的支持 eth_sendRawTransaction
                                                                 probeRpcCapabilities();
-                                                                // 如果 rawTx 返回被吞/不支持，则回退到 eth_sendTransaction（至少能拿到明确的 revert）
-                                                                Log.w(TAG, "sendRawTransaction 无有效返回，回退 eth_sendTransaction");
-                                                                sendCreateTx(txParams);
+                                                                // 不再回退 eth_sendTransaction：会再次走 raw 或导致节点默认账户代发、与钱包地址不一致。
+                                                                runOnUiThread(() -> Toast.makeText(GameMainActivity.this,
+                                                                        "rawTx 失败：" + toastErr
+                                                                                + "。请在 GameConfig 将 USE_HTTP_GATEWAY_FOR_GAME_TX 设为 true（与转账同网关），"
+                                                                                + "或将 USE_RAW_TX 设为 false 仅用直连（仅适合单机调试）。",
+                                                                        Toast.LENGTH_LONG).show());
                                                             }
                                                         } catch (Exception e) {
                                                             Log.e(TAG, "解析 sendRawTransaction 返回失败", e);
@@ -1082,6 +1128,39 @@ public class GameMainActivity extends AppCompatActivity {
             txParams.put("data", data);
             txParams.put("value", "0x" + myStakeWei.toString(16));
             txParams.put("gas", "0x800000");
+
+            if (GameConfig.USE_HTTP_GATEWAY_FOR_GAME_TX) {
+                String pk = StorageUtil.getCurrentPrivatekey(this);
+                if (pk == null || pk.trim().isEmpty()) {
+                    Toast.makeText(this, "未找到当前账户私钥", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                new Thread(() -> {
+                    String json = MyUtil.sendGameContractTxViaGateway(
+                            pk.trim(),
+                            roomAddress,
+                            data,
+                            "0x" + myStakeWei.toString(16),
+                            "0x800000");
+                    String joinTx = MyUtil.parseGatewayTxHash(json);
+                    runOnUiThread(() -> {
+                        if (joinTx != null) {
+                            Log.i(TAG, "加入房间交易已提交（网关）：" + joinTx);
+                            verifyTxFrom(joinTx, from, "joinCreatedRoomGateway");
+                            Toast.makeText(GameMainActivity.this, "已提交加入房间", Toast.LENGTH_SHORT).show();
+                            Intent intent = new Intent(GameMainActivity.this, GameRoomWaitActivity.class);
+                            intent.putExtra("txHash", createTxHash);
+                            intent.putExtra("gameId", gameId.toString());
+                            intent.putExtra("roomAddress", roomAddress);
+                            intent.putExtra("hostAddress", roomHostAddress);
+                            startActivity(intent);
+                        } else {
+                            Toast.makeText(GameMainActivity.this, "加入失败：" + MyUtil.formatGatewayError(json), Toast.LENGTH_LONG).show();
+                        }
+                    });
+                }).start();
+                return;
+            }
 
             JSONArray params = new JSONArray();
             params.put(txParams);

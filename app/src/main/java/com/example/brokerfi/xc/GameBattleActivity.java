@@ -451,6 +451,31 @@ public class GameBattleActivity extends AppCompatActivity {
             txParams.put("value", "0x0");
             txParams.put("gas", "0x800000");
 
+            if (GameConfig.USE_HTTP_GATEWAY_FOR_GAME_TX) {
+                String pk = StorageUtil.getCurrentPrivatekey(this);
+                if (pk == null || pk.trim().isEmpty()) {
+                    appendLog("无当前私钥，无法走网关抽牌");
+                    return;
+                }
+                new Thread(() -> {
+                    String json = MyUtil.sendGameContractTxViaGateway(
+                            pk.trim(),
+                            roomAddress,
+                            data,
+                            "0x0",
+                            "0x800000");
+                    String txHash = MyUtil.parseGatewayTxHash(json);
+                    runOnUiThread(() -> {
+                        if (txHash != null) {
+                            appendLog("抽牌已提交（网关）：" + txHash);
+                        } else {
+                            appendLog("抽牌失败（网关）：" + MyUtil.formatGatewayError(json));
+                        }
+                    });
+                }).start();
+                return;
+            }
+
             JSONArray params = new JSONArray();
             params.put(txParams);
             JSONObject request = new JSONObject();
@@ -530,8 +555,13 @@ public class GameBattleActivity extends AppCompatActivity {
                 public void onSuccess(String result) {
                     try {
                         JSONObject res = new JSONObject(result);
-                        JSONArray logs = res.getJSONArray("result");
-                        if (logs.length() <= 0) return;
+                        // eth_getLogs 可能返回 { "error": ... } 或没有 result，这里要做健壮性判断
+                        if (res.has("error")) {
+                            Log.w(TAG, "查询 GameEnded 日志出错：" + res.optJSONObject("error"));
+                            return;
+                        }
+                        JSONArray logs = res.optJSONArray("result");
+                        if (logs == null || logs.length() <= 0) return;
 
                         gameOver = true;
                         isPolling = false;
