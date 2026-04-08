@@ -4,6 +4,7 @@ import android.os.Handler;
 import android.os.Looper;
 
 import java.io.IOException;
+import java.util.concurrent.TimeUnit;
 import androidx.annotation.NonNull;
 
 import okhttp3.Call;
@@ -24,7 +25,14 @@ public class OkhttpUtils {
         return instance;
     }
 
-    private OkHttpClient okHttpClient = new OkHttpClient();
+    // 轮询 GameBattle 页面会频繁发起 eth_call / eth_getLogs。
+    // 默认超时在弱网/节点繁忙时很容易触发 SocketTimeoutException。
+    private OkHttpClient okHttpClient = new OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(45, TimeUnit.SECONDS)
+            .writeTimeout(15, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build();
 
     private Handler handler = new Handler(Looper.getMainLooper());
 

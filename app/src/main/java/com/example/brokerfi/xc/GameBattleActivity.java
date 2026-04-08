@@ -71,6 +71,16 @@ public class GameBattleActivity extends AppCompatActivity {
         llOpponents = findViewById(R.id.ll_opponents);
         llMyHand = findViewById(R.id.ll_my_hand);
 
+        // 防止返回栈/重入导致看到上一局残留 UI
+        synchronized (handCache) {
+            handCache.clear();
+        }
+        llOpponents.removeAllViews();
+        llMyHand.removeAllViews();
+        TextView loading = new TextView(this);
+        loading.setText("加载中…");
+        llMyHand.addView(loading);
+
         gameId = getIntent().getStringExtra("gameId");
         roomAddress = getIntent().getStringExtra("roomAddress");
         playerList = getIntent().getStringArrayListExtra("playerList");
