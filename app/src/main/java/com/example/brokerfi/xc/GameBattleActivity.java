@@ -57,8 +57,8 @@ public class GameBattleActivity extends AppCompatActivity {
     private volatile int refreshSeq = 0;
 
     private final Map<String, PlayerHandCache> handCache = new HashMap<>();
-    private final ArrayDeque<String> logLines = new ArrayDeque<>();
-    private static final int MAX_LOG_LINES = 120;
+    private final ArrayDeque<String> uiLogLines = new ArrayDeque<>();
+    private static final int UI_LOG_MAX = 24;
 
     private static final class PlayerHandCache {
         BigInteger[] hand10 = new BigInteger[10];
@@ -476,6 +476,7 @@ public class GameBattleActivity extends AppCompatActivity {
             appendLog("点击抽牌被拦截：slot/card不一致，slot=" + slotIndex + ", expect=" + c.order.get(slotIndex) + ", got=" + cardNumber);
             return;
         }
+        appendLog("[SNAPSHOT] targetBefore " + shortAddr(ownerAddr) + " " + briefHandFromCache(ownerAddr));
         isSendingTake = true;
         appendLog("点击抽牌：target=" + shortAddr(ownerAddr) + ", slot=" + slotIndex + ", card=" + cardNumber);
         sendTakeCard(ownerAddr, cardNumber);
@@ -490,6 +491,13 @@ public class GameBattleActivity extends AppCompatActivity {
     private void sendTakeCard(String target, int cardNumber) {
         try {
             String data = ABIUtils.encodeTakeCard(target, cardNumber);
+            appendLog("[TAKE] mode=" + (GameConfig.USE_HTTP_GATEWAY_FOR_GAME_TX ? "gateway-send" : "rpc-send")
+                    + ", rpc=" + GameConfig.BROKERCHAIN_RPC
+                    + ", room=" + shortAddr(roomAddress)
+                    + ", me=" + shortAddr(myAddress)
+                    + ", turn=" + shortAddr(currentTurnPlayer)
+                    + ", target=" + shortAddr(currentTargetPlayer));
+            probeRpcChainSnapshot();
             precheckTakeCardThenSend(target, cardNumber, data);
         } catch (Exception e) {
             appendLog("抽牌调用失败：" + e.getMessage());
@@ -576,6 +584,8 @@ public class GameBattleActivity extends AppCompatActivity {
                     runOnUiThread(() -> {
                         if (txHash != null) {
                             appendLog("抽牌已提交（网关）：" + txHash);
+                            verifyTakeTxVisibleOnRpc(txHash);
+                            watchTakeTxReceipt(txHash, target);
                         } else {
                             appendLog("抽牌失败（网关）：" + MyUtil.formatGatewayError(json));
                         }
@@ -599,7 +609,10 @@ public class GameBattleActivity extends AppCompatActivity {
                     try {
                         JSONObject res = new JSONObject(result);
                         if (res.has("result")) {
-                            appendLog("抽牌已提交：" + res.getString("result"));
+                            String txHash = res.getString("result");
+                            appendLog("抽牌已提交：" + txHash);
+                            verifyTakeTxVisibleOnRpc(txHash);
+                            watchTakeTxReceipt(txHash, target);
                         } else {
                             String err = formatRpcError(res.optJSONObject("error"));
                             appendLog("抽牌失败：" + err);
@@ -631,6 +644,239 @@ public class GameBattleActivity extends AppCompatActivity {
         Object data = errObj.opt("data");
         if (data == null) return "code=" + code + ", message=" + message;
         return "code=" + code + ", message=" + message + ", data=" + String.valueOf(data);
+    }
+
+    private String briefHandFromCache(String addr) {
+        PlayerHandCache c = cacheFor(addr);
+        if (c == null) return "cache=none";
+        int n = 0;
+        for (int v : c.order) if (v >= 1 && v <= 10) n++;
+        int j = 0;
+        for (int v : c.order) if (v == 0) j++;
+        return "numbers=" + n + ", jokers=" + j + ", cards=" + c.order;
+    }
+
+    /** 打印当前预检端（BROKERCHAIN_RPC）的链快照，便于与网关发送端比对。 */
+    private void probeRpcChainSnapshot() {
+        try {
+            JSONObject cidReq = new JSONObject();
+            cidReq.put("jsonrpc", "2.0");
+            cidReq.put("method", "eth_chainId");
+            cidReq.put("params", new JSONArray());
+            cidReq.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, cidReq.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        String cid = res.optString("result", "N/A");
+                        appendLog("[RPC] chainId=" + cid);
+                    } catch (Exception e) {
+                        appendLog("[RPC] chainId解析失败：" + e.getMessage());
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    appendLog("[RPC] chainId网络错误：" + e.getMessage());
+                    return null;
+                }
+            });
+
+            JSONObject bnReq = new JSONObject();
+            bnReq.put("jsonrpc", "2.0");
+            bnReq.put("method", "eth_blockNumber");
+            bnReq.put("params", new JSONArray());
+            bnReq.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, bnReq.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        String bn = res.optString("result", "N/A");
+                        appendLog("[RPC] blockNumber=" + bn);
+                    } catch (Exception e) {
+                        appendLog("[RPC] blockNumber解析失败：" + e.getMessage());
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    appendLog("[RPC] blockNumber网络错误：" + e.getMessage());
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            appendLog("[RPC] 快照探测异常：" + e.getMessage());
+        }
+    }
+
+    /** 网关返回 txHash 后，用当前 BROKERCHAIN_RPC 查询可见性，判断是否同链。 */
+    private void verifyTakeTxVisibleOnRpc(String txHash) {
+        try {
+            JSONArray params = new JSONArray();
+            params.put(txHash);
+            JSONObject req = new JSONObject();
+            req.put("jsonrpc", "2.0");
+            req.put("method", "eth_getTransactionByHash");
+            req.put("params", params);
+            req.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, req.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        JSONObject tx = res.optJSONObject("result");
+                        if (tx == null) {
+                            appendLog("[RPC] tx不可见（可能网关与当前RPC不同链/不同视图）: " + txHash);
+                            return;
+                        }
+                        String from = tx.optString("from", "");
+                        String to = tx.optString("to", "");
+                        appendLog("[RPC] tx可见: from=" + shortAddr(from) + ", to=" + shortAddr(to));
+                    } catch (Exception e) {
+                        appendLog("[RPC] tx可见性解析失败：" + e.getMessage());
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    appendLog("[RPC] tx可见性网络错误：" + e.getMessage());
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            appendLog("[RPC] tx可见性探测异常：" + e.getMessage());
+        }
+    }
+
+    private void watchTakeTxReceipt(String txHash, String target) {
+        watchTakeTxReceipt(txHash, target, 0);
+    }
+
+    private void watchTakeTxReceipt(String txHash, String target, int attempt) {
+        if (attempt > 12) {
+            appendLog("[RECEIPT] 超时未出块：" + txHash);
+            return;
+        }
+        try {
+            JSONArray params = new JSONArray();
+            params.put(txHash);
+            JSONObject req = new JSONObject();
+            req.put("jsonrpc", "2.0");
+            req.put("method", "eth_getTransactionReceipt");
+            req.put("params", params);
+            req.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, req.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        JSONObject receipt = res.optJSONObject("result");
+                        if (receipt == null) {
+                            handler.postDelayed(() -> watchTakeTxReceipt(txHash, target, attempt + 1), 1000);
+                            return;
+                        }
+                        String status = receipt.optString("status", "N/A");
+                        JSONArray logs = receipt.optJSONArray("logs");
+                        int logCount = logs == null ? 0 : logs.length();
+                        appendLog("[RECEIPT] status=" + status + ", logs=" + logCount + ", tx=" + txHash);
+                        boolean hasCardTaken = false;
+                        boolean hasGameEnded = false;
+                        boolean hasRewards = false;
+                        String sigCardTaken = "0x" + ABIUtils.getEventSignatureHash("CardTaken(address,address,uint8)");
+                        String sigGameEnded = "0x" + ABIUtils.getEventSignatureHash("GameEnded(uint256,address[],address[])");
+                        String sigRewards = "0x" + ABIUtils.getEventSignatureHash("RewardsDistributed(uint256,uint256,uint256)");
+                        if (logs != null) {
+                            for (int i = 0; i < logs.length(); i++) {
+                                JSONObject lg = logs.optJSONObject(i);
+                                if (lg == null) continue;
+                                JSONArray topics = lg.optJSONArray("topics");
+                                if (topics == null || topics.length() == 0) continue;
+                                String t0 = topics.optString(0, "");
+                                if (sigCardTaken.equalsIgnoreCase(t0)) hasCardTaken = true;
+                                if (sigGameEnded.equalsIgnoreCase(t0)) hasGameEnded = true;
+                                if (sigRewards.equalsIgnoreCase(t0)) hasRewards = true;
+                            }
+                        }
+                        appendLog("[RECEIPT] events: CardTaken=" + hasCardTaken
+                                + ", GameEnded=" + hasGameEnded
+                                + ", RewardsDistributed=" + hasRewards);
+                        fetchPlayerCardsBrief(target, "[SNAPSHOT] targetAfter");
+                        fetchPlayerCardsBrief(myAddress, "[SNAPSHOT] meAfter");
+                    } catch (Exception e) {
+                        appendLog("[RECEIPT] 解析失败：" + e.getMessage());
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    appendLog("[RECEIPT] 查询失败：" + e.getMessage());
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            appendLog("[RECEIPT] 请求构造失败：" + e.getMessage());
+        }
+    }
+
+    private void fetchPlayerCardsBrief(String player, String prefix) {
+        try {
+            JSONObject callParams = new JSONObject();
+            callParams.put("from", myAddress);
+            callParams.put("to", roomAddress);
+            callParams.put("data", ABIUtils.encodeGetPlayerCards(player));
+            callParams.put("value", "0x0");
+
+            JSONArray params = new JSONArray();
+            params.put(callParams);
+            params.put("latest");
+
+            JSONObject req = new JSONObject();
+            req.put("jsonrpc", "2.0");
+            req.put("method", "eth_call");
+            req.put("params", params);
+            req.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, req.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        String raw = res.optString("result", "0x");
+                        BigInteger[] cards = ABIUtils.decodeUint256Array(raw, 0, 10);
+                        BigInteger joker = ABIUtils.decodeUint256(raw, 10);
+                        int numbers = 0;
+                        StringBuilder detail = new StringBuilder();
+                        detail.append("[");
+                        for (int i = 0; i < 10; i++) {
+                            int c = cards[i] == null ? 0 : cards[i].intValue();
+                            numbers += c;
+                            detail.append(c);
+                            if (i < 9) detail.append(",");
+                        }
+                        detail.append("]");
+                        appendLog(prefix + " " + shortAddr(player) + " numbers=" + numbers
+                                + ", jokers=" + (joker == null ? 0 : joker.intValue())
+                                + ", hand10=" + detail);
+                    } catch (Exception e) {
+                        appendLog(prefix + " 解析失败：" + e.getMessage());
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    appendLog(prefix + " 网络错误：" + e.getMessage());
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            appendLog(prefix + " 请求异常：" + e.getMessage());
+        }
     }
 
     private int getCardResId(int cardNumber) {
@@ -812,18 +1058,30 @@ public class GameBattleActivity extends AppCompatActivity {
 
     private void appendLog(String text) {
         Log.i(TAG, text);
+        if (!shouldShowOnUi(text)) return;
         runOnUiThread(() -> {
-            logLines.addLast(text);
-            while (logLines.size() > MAX_LOG_LINES) {
-                logLines.removeFirst();
-            }
+            uiLogLines.addLast(text);
+            while (uiLogLines.size() > UI_LOG_MAX) uiLogLines.removeFirst();
             StringBuilder sb = new StringBuilder();
-            for (String line : logLines) {
+            for (String s : uiLogLines) {
                 if (sb.length() > 0) sb.append('\n');
-                sb.append(line);
+                sb.append(s);
             }
             tvLog.setText(sb.toString());
         });
+    }
+
+    private boolean shouldShowOnUi(String text) {
+        if (text == null) return false;
+        return text.startsWith("========== 游戏开始")
+                || text.startsWith("游戏ID：")
+                || text.startsWith("房间地址：")
+                || text.startsWith("点击抽牌：")
+                || text.startsWith("抽牌已提交（网关）：")
+                || text.startsWith("抽牌已提交：")
+                || text.startsWith("抽牌失败")
+                || text.startsWith("[RECEIPT]")
+                || text.startsWith("[SNAPSHOT]");
     }
 
     private String getCurrentWalletAddress() {
