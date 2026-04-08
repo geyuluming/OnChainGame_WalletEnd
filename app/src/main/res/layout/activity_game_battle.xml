@@ -71,7 +71,7 @@
                 android:id="@+id/tv_log"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="游戏加载中..."
+                android:text=""
                 android:textSize="12sp" />
         </ScrollView>
 

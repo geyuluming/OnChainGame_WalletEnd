@@ -487,6 +487,67 @@ public class GameBattleActivity extends AppCompatActivity {
     private void sendTakeCard(String target, int cardNumber) {
         try {
             String data = ABIUtils.encodeTakeCard(target, cardNumber);
+            precheckTakeCardThenSend(target, cardNumber, data);
+        } catch (Exception e) {
+            appendLog("抽牌调用失败：" + e.getMessage());
+            isSendingTake = false;
+        }
+    }
+
+    /** 先 eth_call 预检 takeCard，提前拿到 revert 原因，避免“点击无反馈”。 */
+    private void precheckTakeCardThenSend(String target, int cardNumber, String data) {
+        try {
+            JSONObject callParams = new JSONObject();
+            callParams.put("from", myAddress);
+            callParams.put("to", roomAddress);
+            callParams.put("data", data);
+            callParams.put("value", "0x0");
+
+            JSONArray callRpcParams = new JSONArray();
+            callRpcParams.put(callParams);
+            callRpcParams.put("latest");
+
+            JSONObject callReq = new JSONObject();
+            callReq.put("jsonrpc", "2.0");
+            callReq.put("method", "eth_call");
+            callReq.put("params", callRpcParams);
+            callReq.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, callReq.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        if (res.has("error")) {
+                            String err = formatRpcError(res.optJSONObject("error"));
+                            appendLog("抽牌预检失败（revert）：" + err);
+                            runOnUiThread(() -> Toast.makeText(GameBattleActivity.this, "抽牌失败：" + err, Toast.LENGTH_LONG).show());
+                            isSendingTake = false;
+                            return;
+                        }
+                        appendLog("抽牌预检通过：target=" + shortAddr(target) + ", card=" + cardNumber);
+                        sendTakeCardTransaction(target, cardNumber, data);
+                    } catch (Exception e) {
+                        appendLog("抽牌预检解析失败：" + e.getMessage());
+                        isSendingTake = false;
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    appendLog("抽牌预检网络错误：" + e.getMessage());
+                    isSendingTake = false;
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            appendLog("抽牌预检调用失败：" + e.getMessage());
+            isSendingTake = false;
+        }
+    }
+
+    private void sendTakeCardTransaction(String target, int cardNumber, String data) {
+        try {
             JSONObject txParams = new JSONObject();
             txParams.put("from", myAddress);
             txParams.put("to", roomAddress);
@@ -537,8 +598,7 @@ public class GameBattleActivity extends AppCompatActivity {
                         if (res.has("result")) {
                             appendLog("抽牌已提交：" + res.getString("result"));
                         } else {
-                            String err = res.optJSONObject("error") == null ? "unknown"
-                                    : res.optJSONObject("error").optString("message", "unknown");
+                            String err = formatRpcError(res.optJSONObject("error"));
                             appendLog("抽牌失败：" + err);
                         }
                         isSendingTake = false;
@@ -559,6 +619,15 @@ public class GameBattleActivity extends AppCompatActivity {
             appendLog("抽牌调用失败：" + e.getMessage());
             isSendingTake = false;
         }
+    }
+
+    private static String formatRpcError(JSONObject errObj) {
+        if (errObj == null) return "unknown error";
+        int code = errObj.optInt("code", 0);
+        String message = errObj.optString("message", "");
+        Object data = errObj.opt("data");
+        if (data == null) return "code=" + code + ", message=" + message;
+        return "code=" + code + ", message=" + message + ", data=" + String.valueOf(data);
     }
 
     private int getCardResId(int cardNumber) {
@@ -739,6 +808,7 @@ public class GameBattleActivity extends AppCompatActivity {
     }
 
     private void appendLog(String text) {
+        Log.i(TAG, text);
         runOnUiThread(() -> tvLog.setText(tvLog.getText() + "\n" + text));
     }
 
