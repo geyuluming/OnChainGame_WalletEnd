@@ -573,6 +573,12 @@ public class GameBattleActivity extends AppCompatActivity {
                     isSendingTake = false;
                     return;
                 }
+                String sender = "";
+                try {
+                    sender = SecurityUtil.GetAddress(pk.trim());
+                    if (!sender.startsWith("0x")) sender = "0x" + sender;
+                } catch (Exception ignore) {}
+                appendLog("[TAKE] gatewaySender=" + shortAddr(sender));
                 new Thread(() -> {
                     String json = MyUtil.sendGameContractTxViaGateway(
                             pk.trim(),
@@ -588,6 +594,8 @@ public class GameBattleActivity extends AppCompatActivity {
                             watchTakeTxReceipt(txHash, target);
                         } else {
                             appendLog("抽牌失败（网关）：" + MyUtil.formatGatewayError(json));
+                            appendLog("[GATEWAY-RAW] " + json);
+                            debugStateAfterGatewayFail(target);
                         }
                         isSendingTake = false;
                     });
@@ -879,6 +887,87 @@ public class GameBattleActivity extends AppCompatActivity {
         }
     }
 
+    private void debugStateAfterGatewayFail(String target) {
+        debugCurrentTurn();
+        debugTakeTarget();
+        fetchPlayerCardsBrief(target, "[DEBUG] targetNow");
+        fetchPlayerCardsBrief(myAddress, "[DEBUG] meNow");
+    }
+
+    private void debugCurrentTurn() {
+        try {
+            JSONObject callParams = new JSONObject();
+            callParams.put("from", myAddress);
+            callParams.put("to", roomAddress);
+            callParams.put("data", ABIUtils.encodeGetCurrentTurnPlayer());
+            callParams.put("value", "0x0");
+            JSONArray params = new JSONArray();
+            params.put(callParams);
+            params.put("latest");
+            JSONObject req = new JSONObject();
+            req.put("jsonrpc", "2.0");
+            req.put("method", "eth_call");
+            req.put("params", params);
+            req.put("id", RequestIdGenerator.getNextId());
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, req.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        String turn = ABIUtils.decodeAddress(res.optString("result", "0x"));
+                        appendLog("[DEBUG] currentTurnNow=" + shortAddr(turn));
+                    } catch (Exception e) {
+                        appendLog("[DEBUG] currentTurn解析失败：" + e.getMessage());
+                    }
+                }
+                @Override
+                public Void onError(Exception e) {
+                    appendLog("[DEBUG] currentTurn网络错误：" + e.getMessage());
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            appendLog("[DEBUG] currentTurn请求异常：" + e.getMessage());
+        }
+    }
+
+    private void debugTakeTarget() {
+        try {
+            JSONObject callParams = new JSONObject();
+            callParams.put("from", myAddress);
+            callParams.put("to", roomAddress);
+            callParams.put("data", ABIUtils.encodeGetTakeTarget());
+            callParams.put("value", "0x0");
+            JSONArray params = new JSONArray();
+            params.put(callParams);
+            params.put("latest");
+            JSONObject req = new JSONObject();
+            req.put("jsonrpc", "2.0");
+            req.put("method", "eth_call");
+            req.put("params", params);
+            req.put("id", RequestIdGenerator.getNextId());
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, req.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        String t = ABIUtils.decodeAddress(res.optString("result", "0x"));
+                        appendLog("[DEBUG] takeTargetNow=" + shortAddr(t));
+                    } catch (Exception e) {
+                        appendLog("[DEBUG] takeTarget解析失败：" + e.getMessage());
+                    }
+                }
+                @Override
+                public Void onError(Exception e) {
+                    appendLog("[DEBUG] takeTarget网络错误：" + e.getMessage());
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            appendLog("[DEBUG] takeTarget请求异常：" + e.getMessage());
+        }
+    }
+
     private int getCardResId(int cardNumber) {
         if (cardNumber == 0) return R.drawable.joker_a;
         switch (cardNumber) {
@@ -1080,6 +1169,8 @@ public class GameBattleActivity extends AppCompatActivity {
                 || text.startsWith("抽牌已提交（网关）：")
                 || text.startsWith("抽牌已提交：")
                 || text.startsWith("抽牌失败")
+                || text.startsWith("[GATEWAY-RAW]")
+                || text.startsWith("[DEBUG]")
                 || text.startsWith("[RECEIPT]")
                 || text.startsWith("[SNAPSHOT]");
     }
