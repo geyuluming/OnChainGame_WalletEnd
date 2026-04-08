@@ -17,9 +17,17 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.util.Locale;
+import java.util.concurrent.atomic.AtomicReference;
+import org.web3j.crypto.Credentials;
+import org.web3j.crypto.RawTransaction;
+import org.web3j.crypto.TransactionEncoder;
+import org.web3j.utils.Numeric;
 
 public class GameJoinActivity extends AppCompatActivity {
     private static final String TAG = "GameJoin_DEBUG";
+    private static final boolean USE_RAW_TX = true;
+    private static final BigInteger GAS_FALLBACK = new BigInteger("800000", 16);
     private EditText etGameId, etStakeAmount;
     private Button btnJoin;
 
@@ -164,6 +172,38 @@ public class GameJoinActivity extends AppCompatActivity {
             txParams.put("value", "0x" + stakeAmount.toString(16)); // 质押金额
             txParams.put("gas", "0x800000"); // 提高gas上限
 
+            if (USE_RAW_TX) {
+                sendJoinTxRawSigned(txParams, txHash -> {
+                    String expectedFrom = txParams.optString("from", "");
+                    Log.i(TAG, "✅ 加入游戏 rawTx 提交成功！Hash：" + txHash);
+                    verifyTxFrom(txHash, expectedFrom);
+                    runOnUiThread(() -> {
+                        Toast.makeText(GameJoinActivity.this, "加入游戏交易已提交！Hash：" + txHash, Toast.LENGTH_LONG).show();
+                        Intent intent = new Intent(GameJoinActivity.this, GameRoomWaitActivity.class);
+                        intent.putExtra("gameId", gameId.toString());
+                        intent.putExtra("roomAddress", roomAddress);
+                        startActivity(intent);
+                    });
+                }, () -> {
+                    Log.w(TAG, "rawTx 发送失败，回退 eth_sendTransaction（可能被节点默认账户代发）");
+                    sendJoinTxBySendTransaction(txParams, gameId, roomAddress);
+                });
+                return;
+            }
+
+            sendJoinTxBySendTransaction(txParams, gameId, roomAddress);
+        } catch (Exception e) {
+            Log.e(TAG, "发送加入交易异常：", e);
+            runOnUiThread(() -> Toast.makeText(this, "发送交易失败：" + e.getMessage(), Toast.LENGTH_SHORT).show());
+        }
+    }
+
+    private interface TxHashCallback {
+        void onTxHash(String txHash);
+    }
+
+    private void sendJoinTxBySendTransaction(JSONObject txParams, BigInteger gameId, String roomAddress) {
+        try {
             JSONArray params = new JSONArray();
             params.put(txParams);
 
@@ -215,8 +255,203 @@ public class GameJoinActivity extends AppCompatActivity {
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "发送加入交易异常：", e);
-            runOnUiThread(() -> Toast.makeText(this, "发送交易失败：" + e.getMessage(), Toast.LENGTH_SHORT).show());
+            Log.e(TAG, "sendJoinTxBySendTransaction 异常：", e);
+        }
+    }
+
+    private String getCurrentPrivateKeyHex() {
+        try {
+            String acc = StorageUtil.getCurrentAccount(this);
+            int index = (acc == null) ? 0 : Integer.parseInt(acc);
+            String allKeys = StorageUtil.getPrivateKey(this);
+            if (allKeys == null || allKeys.trim().isEmpty()) return "";
+            String[] keys = allKeys.split(";");
+            if (index < 0 || index >= keys.length) return "";
+            String pk = keys[index].trim();
+            if (pk.startsWith("0x") || pk.startsWith("0X")) pk = pk.substring(2);
+            return pk;
+        } catch (Exception e) {
+            Log.e(TAG, "获取私钥失败", e);
+            return "";
+        }
+    }
+
+    /**
+     * 用本地私钥签名并通过 eth_sendRawTransaction 发送 joinGame。
+     * 这样链上 from 才会等于当前钱包地址，不会被节点默认账户代发。
+     */
+    private void sendJoinTxRawSigned(JSONObject txParams, TxHashCallback cb, Runnable onFallback) {
+        try {
+            String from = txParams.optString("from", "");
+            String to = txParams.optString("to", "");
+            String data = txParams.optString("data", "0x");
+            String valueHex = txParams.optString("value", "0x0");
+            String gasHex = txParams.optString("gas", null);
+
+            BigInteger gasLimit = (gasHex != null && gasHex.startsWith("0x"))
+                    ? new BigInteger(gasHex.substring(2), 16)
+                    : GAS_FALLBACK;
+            BigInteger valueWei = (valueHex != null && valueHex.startsWith("0x"))
+                    ? new BigInteger(valueHex.substring(2), 16)
+                    : BigInteger.ZERO;
+
+            String privateKeyHex = getCurrentPrivateKeyHex();
+            if (privateKeyHex.isEmpty()) {
+                runOnUiThread(() -> Toast.makeText(GameJoinActivity.this, "未找到当前账户私钥，无法签名发送", Toast.LENGTH_LONG).show());
+                return;
+            }
+            Credentials credentials = Credentials.create(privateKeyHex);
+
+            AtomicReference<BigInteger> chainIdRef = new AtomicReference<>(BigInteger.ZERO);
+            AtomicReference<BigInteger> nonceRef = new AtomicReference<>(BigInteger.ZERO);
+            AtomicReference<BigInteger> gasPriceRef = new AtomicReference<>(BigInteger.ZERO);
+
+            JSONObject chainIdReq = new JSONObject();
+            chainIdReq.put("jsonrpc", "2.0");
+            chainIdReq.put("method", "eth_chainId");
+            chainIdReq.put("params", new JSONArray());
+            chainIdReq.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, chainIdReq.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String chainIdResult) {
+                    try {
+                        JSONObject res = new JSONObject(chainIdResult);
+                        if (res.has("result")) {
+                            String hex = res.optString("result", "0x0");
+                            chainIdRef.set(new BigInteger(hex.startsWith("0x") ? hex.substring(2) : hex, 16));
+                        }
+                    } catch (Exception ignored) {
+                    }
+
+                    try {
+                        JSONObject nonceReq = new JSONObject();
+                        nonceReq.put("jsonrpc", "2.0");
+                        nonceReq.put("method", "eth_getTransactionCount");
+                        JSONArray params = new JSONArray();
+                        params.put(from.isEmpty() ? credentials.getAddress() : from);
+                        params.put("pending");
+                        nonceReq.put("params", params);
+                        nonceReq.put("id", RequestIdGenerator.getNextId());
+
+                        OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, nonceReq.toString(), new MyCallBack() {
+                            @Override
+                            public void onSuccess(String nonceResult) {
+                                try {
+                                    JSONObject r = new JSONObject(nonceResult);
+                                    String hex = r.optString("result", "0x0");
+                                    nonceRef.set(new BigInteger(hex.startsWith("0x") ? hex.substring(2) : hex, 16));
+                                } catch (Exception ignored) {
+                                }
+
+                                try {
+                                    JSONObject gpReq = new JSONObject();
+                                    gpReq.put("jsonrpc", "2.0");
+                                    gpReq.put("method", "eth_gasPrice");
+                                    gpReq.put("params", new JSONArray());
+                                    gpReq.put("id", RequestIdGenerator.getNextId());
+
+                                    OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, gpReq.toString(), new MyCallBack() {
+                                        @Override
+                                        public void onSuccess(String gpResult) {
+                                            try {
+                                                JSONObject r = new JSONObject(gpResult);
+                                                String hex = r.optString("result", "0x0");
+                                                gasPriceRef.set(new BigInteger(hex.startsWith("0x") ? hex.substring(2) : hex, 16));
+                                            } catch (Exception ignored) {
+                                                gasPriceRef.set(BigInteger.ZERO);
+                                            }
+
+                                            try {
+                                                BigInteger nonce = nonceRef.get();
+                                                BigInteger gasPrice = gasPriceRef.get();
+                                                BigInteger chainId = chainIdRef.get();
+
+                                                Log.i(TAG, String.format(Locale.US,
+                                                        "准备发送 join rawTx: nonce=%s gasPrice=%s gasLimit=%s value=%s chainId=%s to=%s",
+                                                        nonce.toString(), gasPrice.toString(), gasLimit.toString(),
+                                                        valueWei.toString(), chainId.toString(), to));
+
+                                                RawTransaction raw = RawTransaction.createTransaction(
+                                                        nonce, gasPrice, gasLimit, to, valueWei, data
+                                                );
+                                                byte[] signed = (chainId.compareTo(BigInteger.ZERO) > 0)
+                                                        ? TransactionEncoder.signMessage(raw, chainId.longValue(), credentials)
+                                                        : TransactionEncoder.signMessage(raw, credentials);
+                                                String rawHex = Numeric.toHexString(signed);
+
+                                                JSONObject sendReq = new JSONObject();
+                                                sendReq.put("jsonrpc", "2.0");
+                                                sendReq.put("method", "eth_sendRawTransaction");
+                                                JSONArray p = new JSONArray();
+                                                p.put(rawHex);
+                                                sendReq.put("params", p);
+                                                sendReq.put("id", RequestIdGenerator.getNextId());
+
+                                                OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, sendReq.toString(), new MyCallBack() {
+                                                    @Override
+                                                    public void onSuccess(String result) {
+                                                        try {
+                                                            JSONObject resp = new JSONObject(result);
+                                                            if (resp.has("result")) {
+                                                                cb.onTxHash(resp.getString("result"));
+                                                            } else {
+                                                                String err = resp.optJSONObject("error") == null ? "unknown"
+                                                                        : resp.optJSONObject("error").optString("message", "unknown");
+                                                                Log.e(TAG, "sendRawTransaction 失败：" + err);
+                                                                if (onFallback != null) onFallback.run();
+                                                            }
+                                                        } catch (Exception e) {
+                                                            Log.e(TAG, "解析 sendRawTransaction 返回失败", e);
+                                                            if (onFallback != null) onFallback.run();
+                                                        }
+                                                    }
+
+                                                    @Override
+                                                    public Void onError(Exception e) {
+                                                        Log.e(TAG, "sendRawTransaction 网络错误", e);
+                                                        if (onFallback != null) onFallback.run();
+                                                        return null;
+                                                    }
+                                                });
+                                            } catch (Exception e) {
+                                                Log.e(TAG, "签名/发送 rawTx 异常", e);
+                                                if (onFallback != null) onFallback.run();
+                                            }
+                                        }
+
+                                        @Override
+                                        public Void onError(Exception e) {
+                                            if (onFallback != null) onFallback.run();
+                                            return null;
+                                        }
+                                    });
+                                } catch (Exception e) {
+                                    if (onFallback != null) onFallback.run();
+                                }
+                            }
+
+                            @Override
+                            public Void onError(Exception e) {
+                                if (onFallback != null) onFallback.run();
+                                return null;
+                            }
+                        });
+                    } catch (Exception e) {
+                        if (onFallback != null) onFallback.run();
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    // chainId 拉不到也继续（chainId=0）
+                    onSuccess("{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":\"0x0\"}");
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "sendJoinTxRawSigned 异常", e);
+            if (onFallback != null) onFallback.run();
         }
     }
 

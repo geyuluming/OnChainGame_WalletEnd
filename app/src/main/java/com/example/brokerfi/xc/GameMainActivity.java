@@ -30,9 +30,9 @@ public class GameMainActivity extends AppCompatActivity {
     private Button btnCreateGame, btnJoinGame;
     private static final BigInteger GAS_FALLBACK = new BigInteger("800000", 16);
     private static final BigInteger GAS_BUFFER_BPS = BigInteger.valueOf(12_000L); // +20%
-    // BrokerChain 钱包/白皮书示例主要使用 eth_sendTransaction。
-    // eth_sendRawTransaction 在某些网关/节点上可能被吞返回（只回 jsonrpc/id），因此仅作为兜底。
-    private static final boolean USE_RAW_TX = false;
+    // 关键：使用本地私钥签名 + eth_sendRawTransaction，才能保证“当前钱包地址”真正成为链上 from/host。
+    // 否则很多节点会忽略 eth_sendTransaction 的 from，改用节点默认解锁账户代发，导致 host 永远是跑节点的地址。
+    private static final boolean USE_RAW_TX = true;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -663,6 +663,9 @@ public class GameMainActivity extends AppCompatActivity {
                         if (response.has("result")) {
                             String txHash = response.getString("result");
                             Log.i(TAG, "创建游戏交易提交成功！Hash：" + txHash);
+                            // 校验链上实际 from，避免节点忽略 from 字段
+                            String expectedFrom = sendParams.getJSONObject(0).optString("from", "");
+                            verifyTxFrom(txHash, expectedFrom, "createGame");
                             queryGameRoomInfo(txHash);
                             runOnUiThread(() ->
                                     Toast.makeText(GameMainActivity.this, "创建游戏交易已提交！Hash：" + txHash, Toast.LENGTH_LONG).show()
@@ -1056,7 +1059,7 @@ public class GameMainActivity extends AppCompatActivity {
     /**
      * 创建房间收据确认后：第二笔交易加入房间（质押通过 msg.value），成功后再进入等待页。
      */
-    private void joinCreatedRoom(String roomAddress, BigInteger gameId, String createTxHash) {
+    private void joinCreatedRoom(String roomAddress, BigInteger gameId, String createTxHash, String roomHostAddress) {
         try {
             String myStakeStr = etMyStake.getText().toString().trim();
             if (myStakeStr.isEmpty()) {
@@ -1096,12 +1099,14 @@ public class GameMainActivity extends AppCompatActivity {
                         if (response.has("result")) {
                             String joinTx = response.getString("result");
                             Log.i(TAG, "加入房间交易已提交：" + joinTx);
+                            verifyTxFrom(joinTx, from, "joinCreatedRoom");
                             runOnUiThread(() -> {
                                 Toast.makeText(GameMainActivity.this, "已提交加入房间", Toast.LENGTH_SHORT).show();
                                 Intent intent = new Intent(GameMainActivity.this, GameRoomWaitActivity.class);
                                 intent.putExtra("txHash", createTxHash);
                                 intent.putExtra("gameId", gameId.toString());
                                 intent.putExtra("roomAddress", roomAddress);
+                                intent.putExtra("hostAddress", roomHostAddress);
                                 startActivity(intent);
                             });
                         } else {
@@ -1174,8 +1179,9 @@ public class GameMainActivity extends AppCompatActivity {
                                 // 创建成功后第二笔交易：joinGame（带质押），再进等待页
                                 final BigInteger gid = gameId;
                                 final String room = roomAddress;
+                                final String host = hostAddress;
                                 final String createTx = txHash;
-                                runOnUiThread(() -> joinCreatedRoom(room, gid, createTx));
+                                runOnUiThread(() -> joinCreatedRoom(room, gid, createTx, host));
                                 break;
                             }
                         }
@@ -1218,5 +1224,47 @@ public class GameMainActivity extends AppCompatActivity {
         BigDecimal bkc = new BigDecimal(bkcStr);
         BigDecimal wei = bkc.multiply(new BigDecimal("1000000000000000000"));
         return wei.toBigInteger();
+    }
+
+    private void verifyTxFrom(String txHash, String expectedFrom, String scene) {
+        try {
+            JSONArray params = new JSONArray();
+            params.put(txHash);
+            JSONObject req = new JSONObject();
+            req.put("jsonrpc", "2.0");
+            req.put("method", "eth_getTransactionByHash");
+            req.put("params", params);
+            req.put("id", RequestIdGenerator.getNextId());
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, req.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        JSONObject tx = res.optJSONObject("result");
+                        if (tx == null) return;
+                        String actualFrom = tx.optString("from", "");
+                        Log.i(TAG, "地址校验(" + scene + ") expectedFrom=" + expectedFrom + ", actualFrom=" + actualFrom + ", txHash=" + txHash);
+                        if (expectedFrom != null && !expectedFrom.isEmpty()
+                                && actualFrom != null && !actualFrom.isEmpty()
+                                && !expectedFrom.equalsIgnoreCase(actualFrom)) {
+                            runOnUiThread(() -> Toast.makeText(
+                                    GameMainActivity.this,
+                                    "警告：链上交易发送地址与当前钱包不一致（节点可能使用默认解锁账户代发）",
+                                    Toast.LENGTH_LONG
+                            ).show());
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "地址校验解析异常(" + scene + ")", e);
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "verifyTxFrom 异常(" + scene + ")", e);
+        }
     }
 }

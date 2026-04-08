@@ -69,13 +69,15 @@ public class GameRoomWaitActivity extends AppCompatActivity {
         String gameIdStr = getIntent().getStringExtra("gameId");
         roomAddress = getIntent().getStringExtra("roomAddress");
         currentWalletAddress = getCurrentWalletAddress();
-        hostAddress = currentWalletAddress;
+        String hostFromIntent = getIntent().getStringExtra("hostAddress");
+        hostAddress = (hostFromIntent != null && hostFromIntent.length() >= 10) ? hostFromIntent : currentWalletAddress;
 
         Log.d(TAG, "页面参数：");
         Log.d(TAG, "txHash：" + txHash);
         Log.d(TAG, "gameId：" + gameIdStr);
         Log.d(TAG, "roomAddress：" + roomAddress);
         Log.d(TAG, "host：" + hostAddress);
+        Log.d(TAG, "currentWallet：" + currentWalletAddress);
 
         // 初始化gameId
         if (gameIdStr != null) {
