@@ -109,7 +109,25 @@ public class GameMainActivity extends AppCompatActivity {
                 public void onSuccess(String result) {
                     try {
                         JSONObject res = new JSONObject(result);
-                        String factoryAddr = ABIUtils.decodeAddress(res.optString("result", "0x"));
+                        if (res.has("error")) {
+                            String err = formatRpcError(res.optJSONObject("error"));
+                            Log.e(TAG, "读取 Vault.factory 失败：" + err);
+                            runOnUiThread(() -> {
+                                btnCreateGame.setEnabled(false);
+                                Toast.makeText(GameMainActivity.this, "读取 Vault.factory 失败：" + err, Toast.LENGTH_LONG).show();
+                            });
+                            return;
+                        }
+                        String raw = res.optString("result", "0x");
+                        if (raw == null || raw.equals("0x")) {
+                            Log.w(TAG, "Vault.factory eth_call 返回空结果，raw=" + raw);
+                            runOnUiThread(() -> {
+                                btnCreateGame.setEnabled(false);
+                                Toast.makeText(GameMainActivity.this, "Vault.factory 返回空结果，请确认 RPC 与合约地址", Toast.LENGTH_LONG).show();
+                            });
+                            return;
+                        }
+                        String factoryAddr = ABIUtils.decodeAddress(raw);
                         boolean ok = factoryAddr != null
                                 && factoryAddr.equalsIgnoreCase(GameConfig.GAME_FACTORY_ADDRESS);
 
@@ -365,8 +383,14 @@ public class GameMainActivity extends AppCompatActivity {
                             runOnUiThread(() -> Toast.makeText(GameMainActivity.this, "读取金库配置失败：" + err, Toast.LENGTH_LONG).show());
                             return;
                         }
-
-                        String factoryAddr = ABIUtils.decodeAddress(res.optString("result", "0x"));
+                        String raw = res.optString("result", "0x");
+                        if (raw == null || raw.equals("0x")) {
+                            String msg = "读取金库配置失败：Vault.factory 返回空结果，请确认 RPC 与 Vault 地址";
+                            Log.e(TAG, msg);
+                            runOnUiThread(() -> Toast.makeText(GameMainActivity.this, msg, Toast.LENGTH_LONG).show());
+                            return;
+                        }
+                        String factoryAddr = ABIUtils.decodeAddress(raw);
                         Log.i(TAG, "Vault.factory=" + factoryAddr + " expected=" + GameConfig.GAME_FACTORY_ADDRESS);
                         if (factoryAddr == null || !factoryAddr.equalsIgnoreCase(GameConfig.GAME_FACTORY_ADDRESS)) {
                             String msg = "金库未授权该工厂：Vault.factory=" + factoryAddr

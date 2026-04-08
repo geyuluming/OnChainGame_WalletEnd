@@ -364,8 +364,17 @@ public class GameRoomWaitActivity extends AppCompatActivity {
                 public void onSuccess(String result) {
                     try {
                         JSONObject res = new JSONObject(result);
+                        if (res.has("error")) {
+                            Log.w(TAG, "fetchGameStateByCall RPC错误: " + res.optJSONObject("error"));
+                            return;
+                        }
                         String raw = res.optString("result", "0x");
-                        BigInteger st = new BigInteger(raw.startsWith("0x") ? raw.substring(2) : raw, 16);
+                        // 部分节点/异常场景会返回 "0x"（空数据），避免 NumberFormatException。
+                        if (raw == null || raw.equals("0x") || raw.length() < 3) {
+                            Log.w(TAG, "fetchGameStateByCall 返回空结果，room=" + roomAddress);
+                            return;
+                        }
+                        BigInteger st = ABIUtils.decodeUint256(raw, 0);
                         // enum GameState { PENDING(0), DEALING(1), PLAYING(2), ENDED(3) }
                         if (st.compareTo(BigInteger.valueOf(2)) >= 0) {
                             gameStatus = "游戏中";
