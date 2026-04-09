@@ -1,156 +1,179 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="16dp">
-
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="创建链上卡牌游戏"
-        android:textSize="22sp"
-        android:textStyle="bold"
-        android:gravity="center"
-        android:layout_marginBottom="24dp"/>
+    android:fillViewport="true"
+    android:background="#FFF5F5F5">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginBottom="12dp">
+        android:orientation="vertical"
+        android:padding="14dp">
+
         <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="最小玩家数："
-            android:textSize="16sp"
-            android:layout_gravity="center_vertical"/>
-        <EditText
-            android:id="@+id/et_min_players"
             android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:hint="2"
-            android:inputType="number"
-            android:paddingHorizontal="16dp"/>
-    </LinearLayout>
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginBottom="12dp">
-        <TextView
-            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="最大玩家数："
-            android:textSize="16sp"
-            android:layout_gravity="center_vertical"/>
-        <EditText
-            android:id="@+id/et_max_players"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:hint="4"
-            android:inputType="number"
-            android:paddingHorizontal="16dp"/>
-    </LinearLayout>
+            android:background="#FF000000"
+            android:gravity="center"
+            android:paddingTop="12dp"
+            android:paddingBottom="12dp"
+            android:text="创建链上卡牌游戏"
+            android:textColor="#FFFFFFFF"
+            android:textSize="20sp"
+            android:textStyle="bold" />
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginBottom="12dp">
-        <TextView
-            android:layout_width="wrap_content"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="最小质押（BKC）："
-            android:textSize="16sp"
-            android:layout_gravity="center_vertical"/>
-        <EditText
-            android:id="@+id/et_min_stake"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/bg_bw_card"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="基础参数"
+                android:textColor="#FF000000"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="最小玩家数"
+                android:textColor="#FF111111"
+                android:textSize="14sp" />
+
+            <EditText
+                android:id="@+id/et_min_players"
+                android:layout_width="match_parent"
+                android:layout_height="46dp"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/bg_bw_input"
+                android:hint="2"
+                android:inputType="number"
+                android:textColor="#FF000000"
+                android:textColorHint="#FF777777" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="最大玩家数"
+                android:textColor="#FF111111"
+                android:textSize="14sp" />
+
+            <EditText
+                android:id="@+id/et_max_players"
+                android:layout_width="match_parent"
+                android:layout_height="46dp"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/bg_bw_input"
+                android:hint="4"
+                android:inputType="number"
+                android:textColor="#FF000000"
+                android:textColorHint="#FF777777" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="最小质押（BKC）"
+                android:textColor="#FF111111"
+                android:textSize="14sp" />
+
+            <EditText
+                android:id="@+id/et_min_stake"
+                android:layout_width="match_parent"
+                android:layout_height="46dp"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/bg_bw_input"
+                android:hint="10"
+                android:inputType="number"
+                android:textColor="#FF000000"
+                android:textColorHint="#FF777777" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="最大质押（BKC）"
+                android:textColor="#FF111111"
+                android:textSize="14sp" />
+
+            <EditText
+                android:id="@+id/et_max_stake"
+                android:layout_width="match_parent"
+                android:layout_height="46dp"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/bg_bw_input"
+                android:hint="100"
+                android:inputType="number"
+                android:textColor="#FF000000"
+                android:textColorHint="#FF777777" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="小丑牌数量"
+                android:textColor="#FF111111"
+                android:textSize="14sp" />
+
+            <EditText
+                android:id="@+id/et_joker_count"
+                android:layout_width="match_parent"
+                android:layout_height="46dp"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/bg_bw_input"
+                android:hint="1"
+                android:inputType="number"
+                android:textColor="#FF000000"
+                android:textColorHint="#FF777777" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="本人质押（BKC）"
+                android:textColor="#FF111111"
+                android:textSize="14sp" />
+
+            <EditText
+                android:id="@+id/et_my_stake"
+                android:layout_width="match_parent"
+                android:layout_height="46dp"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/bg_bw_input"
+                android:hint="与最小～最大质押范围内"
+                android:inputType="numberDecimal"
+                android:textColor="#FF000000"
+                android:textColorHint="#FF777777" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btn_create_game"
             android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:hint="10"
-            android:inputType="number"
-            android:paddingHorizontal="16dp"/>
-    </LinearLayout>
+            android:layout_height="52dp"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_bw_button"
+            android:text="创建游戏"
+            android:textColor="#FFFFFFFF"
+            android:textSize="17sp"
+            android:textStyle="bold" />
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginBottom="12dp">
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="最大质押（BKC）："
-            android:textSize="16sp"
-            android:layout_gravity="center_vertical"/>
-        <EditText
-            android:id="@+id/et_max_stake"
+        <Button
+            android:id="@+id/btn_join_game"
             android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:hint="100"
-            android:inputType="number"
-            android:paddingHorizontal="16dp"/>
+            android:layout_height="52dp"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_bw_button"
+            android:text="加入已有游戏"
+            android:textColor="#FFFFFFFF"
+            android:textSize="17sp"
+            android:textStyle="bold" />
     </LinearLayout>
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginBottom="12dp">
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="小丑牌数量："
-            android:textSize="16sp"
-            android:layout_gravity="center_vertical"/>
-        <EditText
-            android:id="@+id/et_joker_count"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:hint="1"
-            android:inputType="number"
-            android:paddingHorizontal="16dp"/>
-    </LinearLayout>
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginBottom="24dp">
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="本人质押（BKC）："
-            android:textSize="16sp"
-            android:layout_gravity="center_vertical"/>
-        <EditText
-            android:id="@+id/et_my_stake"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:hint="与最小～最大质押范围内"
-            android:inputType="numberDecimal"
-            android:paddingHorizontal="16dp"/>
-    </LinearLayout>
-
-    <Button
-        android:id="@+id/btn_create_game"
-        android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:text="创建游戏"
-        android:textSize="18sp"
-        android:background="#2196F3"
-        android:textColor="#FFFFFF"
-        android:layout_marginBottom="12dp"/>
-
-    <Button
-        android:id="@+id/btn_join_game"
-        android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:text="加入已有游戏"
-        android:textSize="18sp"
-        android:background="#2196F3"
-        android:textColor="#FFFFFF"/>
-
-</LinearLayout>
+</ScrollView>

@@ -71,6 +71,12 @@ public class GameBattleActivity extends AppCompatActivity {
     private volatile BigInteger chainRoomGameId = null;
     /** 最近一次终局解码出的获胜者，用于同一笔交易回执里的 Rewards 展示 */
     private List<String> lastSettledWinners = null;
+    /** 本局最后一笔己方提交的抽牌 txHash，eth_getLogs 失败时用于回执解析 */
+    private String lastSubmittedTakeTxHash = null;
+    /** 已展示具体 BKC 数额则不再用「奖池已结清」占位覆盖 */
+    private volatile boolean rewardPanelHasConcreteAmounts = false;
+
+    private View scrollDebugLog;
 
     private final Map<String, PlayerHandCache> handCache = new HashMap<>();
     private final ArrayDeque<String> uiLogLines = new ArrayDeque<>();
@@ -83,12 +89,17 @@ public class GameBattleActivity extends AppCompatActivity {
         List<Integer> order = new ArrayList<>();
     }
 
+    private interface StakeResultCallback {
+        void onResult(BigInteger stake);
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_game_battle);
 
         scrollBattleRoot = findViewById(R.id.scroll_battle_root);
+        scrollDebugLog = findViewById(R.id.scroll_debug_log);
         tvLog = findViewById(R.id.tv_log);
         tvResult = findViewById(R.id.tv_result);
         tvTurn = findViewById(R.id.tv_turn);
@@ -127,6 +138,9 @@ public class GameBattleActivity extends AppCompatActivity {
         appendLog("游戏ID：" + gameId);
         appendLog("房间地址：" + roomAddress);
         lastSettledWinners = null;
+        lastSubmittedTakeTxHash = null;
+        rewardPanelHasConcreteAmounts = false;
+        if (scrollDebugLog != null) scrollDebugLog.setVisibility(View.VISIBLE);
         fetchChainRoomGameId(() -> { });
         handler.post(pollRunnable);
     }
@@ -617,6 +631,7 @@ public class GameBattleActivity extends AppCompatActivity {
                     String txHash = MyUtil.parseGatewayTxHash(json);
                     runOnUiThread(() -> {
                         if (txHash != null) {
+                            lastSubmittedTakeTxHash = txHash;
                             appendLog("抽牌已提交（网关）：" + txHash);
                             verifyTakeTxVisibleOnRpc(txHash);
                             watchTakeTxReceipt(txHash, target);
@@ -646,6 +661,7 @@ public class GameBattleActivity extends AppCompatActivity {
                         JSONObject res = new JSONObject(result);
                         if (res.has("result")) {
                             String txHash = res.getString("result");
+                            lastSubmittedTakeTxHash = txHash;
                             appendLog("抽牌已提交：" + txHash);
                             verifyTakeTxVisibleOnRpc(txHash);
                             watchTakeTxReceipt(txHash, target);
@@ -1135,10 +1151,74 @@ public class GameBattleActivity extends AppCompatActivity {
     }
 
     /**
-     * eth_getLogs 查不到 Rewards 时：若 Vault.gamePools(gameId)==0，说明 distributeRewards 已执行、奖池已清空。
+     * eth_getLogs 查不到 Rewards 时：先尝试末笔抽牌交易回执；再 eth_call gamePools；仍无数额才显示结清说明。
      */
     private void tryVaultPoolClearedFallback(List<String> winners) {
+        if (rewardPanelHasConcreteAmounts) return;
         BigInteger gid = gameIdForEventTopics();
+        String h = lastSubmittedTakeTxHash;
+        if (h != null && !h.trim().isEmpty()) {
+            fetchReceiptParseRewardsOrElseVaultPool(h.trim(), winners, gid);
+            return;
+        }
+        runVaultGamePoolCheck(winners, gid);
+    }
+
+    /** 从指定 tx 回执解析 RewardsDistributed，失败或未包含则走 Vault.gamePools */
+    private void fetchReceiptParseRewardsOrElseVaultPool(String txHash, List<String> winners, BigInteger gid) {
+        try {
+            JSONArray params = new JSONArray();
+            params.put(txHash);
+            JSONObject req = new JSONObject();
+            req.put("jsonrpc", "2.0");
+            req.put("method", "eth_getTransactionReceipt");
+            req.put("params", params);
+            req.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, req.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        if (rewardPanelHasConcreteAmounts) return;
+                        JSONObject res = new JSONObject(result);
+                        JSONObject receipt = res.optJSONObject("result");
+                        if (receipt == null) {
+                            runVaultGamePoolCheck(winners, gid);
+                            return;
+                        }
+                        JSONArray logs = receipt.optJSONArray("logs");
+                        BigInteger[] amts = parseRewardsDistributedFromReceiptLogs(logs);
+                        if (amts != null) {
+                            BigInteger rewardPool = amts[0];
+                            BigInteger fee = amts[1];
+                            BigInteger total = rewardPool.add(fee);
+                            appendLog("[FALLBACK] 从末笔抽牌回执解析 RewardsDistributed：扣费前 " + fromWei(total) + " BKC");
+                            List<String> wcopy = winners == null ? null : new ArrayList<>(winners);
+                            BigInteger rf = rewardPool, ff = fee, tf = total;
+                            runOnUiThread(() -> showRewardPanelSuccess(tf, ff, rf, wcopy));
+                            return;
+                        }
+                        runVaultGamePoolCheck(winners, gid);
+                    } catch (Exception e) {
+                        Log.e(TAG, "fetchReceiptParseRewardsOrElseVaultPool", e);
+                        runVaultGamePoolCheck(winners, gid);
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    runVaultGamePoolCheck(winners, gid);
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "fetchReceiptParseRewardsOrElseVaultPool", e);
+            runVaultGamePoolCheck(winners, gid);
+        }
+    }
+
+    private void runVaultGamePoolCheck(List<String> winners, BigInteger gid) {
+        if (rewardPanelHasConcreteAmounts) return;
         try {
             String calldata = ABIUtils.encodeVaultGamePools(gid);
             JSONObject callParams = new JSONObject();
@@ -1159,6 +1239,7 @@ public class GameBattleActivity extends AppCompatActivity {
                 @Override
                 public void onSuccess(String result) {
                     try {
+                        if (rewardPanelHasConcreteAmounts) return;
                         JSONObject res = new JSONObject(result);
                         if (res.has("error")) {
                             runOnUiThread(() -> showRewardPanelError(
@@ -1178,7 +1259,7 @@ public class GameBattleActivity extends AppCompatActivity {
                                             + " BKC。请检查 RPC 的 eth_getLogs 是否可用及 STAKING_VAULT_ADDRESS。"));
                         }
                     } catch (Exception e) {
-                        Log.e(TAG, "tryVaultPoolClearedFallback", e);
+                        Log.e(TAG, "runVaultGamePoolCheck", e);
                         runOnUiThread(() -> showRewardPanelError("确认奖池状态失败：" + e.getMessage()));
                     }
                 }
@@ -1190,12 +1271,13 @@ public class GameBattleActivity extends AppCompatActivity {
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "tryVaultPoolClearedFallback", e);
+            Log.e(TAG, "runVaultGamePoolCheck", e);
             runOnUiThread(() -> showRewardPanelError(e.getMessage()));
         }
     }
 
     private void showRewardPanelPoolClearedHint(BigInteger gid, List<String> winners) {
+        if (rewardPanelHasConcreteAmounts) return;
         if (layoutRewardPanel == null) return;
         layoutRewardPanel.setVisibility(View.VISIBLE);
         tvRewardStatus.setText("链上奖池已结清 · gameId " + gid);
@@ -1570,6 +1652,8 @@ public class GameBattleActivity extends AppCompatActivity {
     /** 终局后展开奖励面板：黑白描边样式，加载态 */
     private void showRewardPanelLoading() {
         if (layoutRewardPanel == null) return;
+        rewardPanelHasConcreteAmounts = false;
+        if (scrollDebugLog != null) scrollDebugLog.setVisibility(View.VISIBLE);
         layoutRewardPanel.setVisibility(View.VISIBLE);
         tvRewardStatus.setText("正在查询 StakingVault 的 RewardsDistributed 事件…");
         tvRewardLinePool.setText("奖池（扣费前）　—");
@@ -1581,8 +1665,10 @@ public class GameBattleActivity extends AppCompatActivity {
 
     private void showRewardPanelSuccess(BigInteger totalBeforeFee, BigInteger fee, BigInteger rewardPool, List<String> winners) {
         if (layoutRewardPanel == null) return;
+        rewardPanelHasConcreteAmounts = true;
+        if (scrollDebugLog != null) scrollDebugLog.setVisibility(View.GONE);
         layoutRewardPanel.setVisibility(View.VISIBLE);
-        tvRewardStatus.setText("链上分配已同步 · 本局 gameId " + (gameId != null ? gameId : "—"));
+        tvRewardStatus.setText("链上分配已同步 · gameId " + gameIdForEventTopics());
         tvRewardLinePool.setText("奖池（扣费前）　" + fromWei(totalBeforeFee) + " BKC");
         tvRewardLineFee.setText("协议手续费　　　" + fromWei(fee) + " BKC");
         tvRewardLineWinner.setText("获胜者分配池　　" + fromWei(rewardPool) + " BKC");
@@ -1602,11 +1688,123 @@ public class GameBattleActivity extends AppCompatActivity {
             }
         }
         tvRewardLineExtra.setText(ex.toString());
+        fetchWinnerBreakdownAndRender(winners, rewardPool);
         tvResult.setText("已结束 · 手续费 " + fromWeiShort(fee) + " · 分配池 " + fromWeiShort(rewardPool));
         scrollToRewardPanel();
     }
 
+    /** 在奖励面板追加“获胜者地址 + 分得奖励”明细。 */
+    private void fetchWinnerBreakdownAndRender(List<String> winners, BigInteger rewardPool) {
+        if (!rewardPanelHasConcreteAmounts) return;
+        if (winners == null || winners.isEmpty()) return;
+        if (rewardPool == null || rewardPool.compareTo(BigInteger.ZERO) <= 0) return;
+
+        List<String> winnerCopy = new ArrayList<>();
+        for (String w : winners) {
+            if (w != null && !w.trim().isEmpty()) winnerCopy.add(w);
+        }
+        if (winnerCopy.isEmpty()) return;
+
+        Map<String, BigInteger> stakes = new HashMap<>();
+        fetchWinnerStakesSequentially(winnerCopy, 0, stakes, () -> {
+            if (!rewardPanelHasConcreteAmounts) return;
+            BigInteger totalStake = BigInteger.ZERO;
+            for (String w : winnerCopy) {
+                totalStake = totalStake.add(stakes.getOrDefault(w.toLowerCase(), BigInteger.ZERO));
+            }
+            if (totalStake.compareTo(BigInteger.ZERO) <= 0) {
+                String base = tvRewardLineExtra.getText() == null ? "" : tvRewardLineExtra.getText().toString();
+                tvRewardLineExtra.setText(base + "\n\n获胜者分配明细：\n无法读取赢家质押额，暂无法逐人拆分。");
+                return;
+            }
+
+            StringBuilder detail = new StringBuilder();
+            detail.append("\n\n获胜者分配明细（地址 / 分得奖励）：");
+            for (String w : winnerCopy) {
+                BigInteger st = stakes.getOrDefault(w.toLowerCase(), BigInteger.ZERO);
+                BigInteger reward = st.multiply(rewardPool).divide(totalStake);
+                detail.append("\n")
+                        .append(w)
+                        .append("\n  ≈ ")
+                        .append(fromWei(reward))
+                        .append(" BKC");
+            }
+            String base = tvRewardLineExtra.getText() == null ? "" : tvRewardLineExtra.getText().toString();
+            tvRewardLineExtra.setText(base + detail);
+        });
+    }
+
+    private void fetchWinnerStakesSequentially(
+            List<String> winners,
+            int index,
+            Map<String, BigInteger> stakes,
+            Runnable done
+    ) {
+        if (index >= winners.size()) {
+            if (done != null) runOnUiThread(done);
+            return;
+        }
+        String w = winners.get(index);
+        fetchPlayerStakeAmountFromRoom(w, stake -> {
+            stakes.put(w.toLowerCase(), stake != null ? stake : BigInteger.ZERO);
+            fetchWinnerStakesSequentially(winners, index + 1, stakes, done);
+        });
+    }
+
+    /** 从 GameRoom.playerData(address) 读取 stakeAmount（第2个槽位） */
+    private void fetchPlayerStakeAmountFromRoom(String player, StakeResultCallback cb) {
+        if (player == null || player.trim().isEmpty()) {
+            if (cb != null) cb.onResult(BigInteger.ZERO);
+            return;
+        }
+        try {
+            JSONObject callParams = new JSONObject();
+            callParams.put("from", myAddress);
+            callParams.put("to", roomAddress);
+            callParams.put("data", ABIUtils.encodePlayerData(player));
+            callParams.put("value", "0x0");
+
+            JSONArray params = new JSONArray();
+            params.put(callParams);
+            params.put("latest");
+
+            JSONObject req = new JSONObject();
+            req.put("jsonrpc", "2.0");
+            req.put("method", "eth_call");
+            req.put("params", params);
+            req.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, req.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        if (res.has("error")) {
+                            if (cb != null) cb.onResult(BigInteger.ZERO);
+                            return;
+                        }
+                        String raw = res.optString("result", "0x");
+                        String stakeHex = ABIUtils.decodeStakeAmount(raw);
+                        BigInteger stake = new BigInteger(stakeHex, 16);
+                        if (cb != null) cb.onResult(stake);
+                    } catch (Exception e) {
+                        if (cb != null) cb.onResult(BigInteger.ZERO);
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    if (cb != null) cb.onResult(BigInteger.ZERO);
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            if (cb != null) cb.onResult(BigInteger.ZERO);
+        }
+    }
+
     private void showRewardPanelError(String message) {
+        if (rewardPanelHasConcreteAmounts) return;
         if (layoutRewardPanel == null) return;
         layoutRewardPanel.setVisibility(View.VISIBLE);
         tvRewardStatus.setText("奖励分配数据未完整拉取");
@@ -1687,7 +1885,6 @@ public class GameBattleActivity extends AppCompatActivity {
                 || text.startsWith("[GATEWAY-RAW]")
                 || text.startsWith("[DEBUG]")
                 || text.startsWith("[RECEIPT]")
-                || text.startsWith("[SNAPSHOT]")
                 || text.startsWith("[RECEIPT] 已从")
                 || text.startsWith("========== 链上分配（推断）")
                 || text.startsWith("Vault gamePools");

@@ -2,93 +2,128 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="#FFF5F5F5"
+    android:gravity="center_horizontal"
     android:orientation="vertical"
-    android:padding="24dp"
-    android:gravity="center_horizontal">
+    android:padding="14dp">
 
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="游戏房间等待中"
-        android:textSize="24sp"
-        android:textStyle="bold"
+        android:background="#FF000000"
         android:gravity="center"
-        android:layout_marginBottom="30dp"/>
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp"
+        android:text="游戏房间等待中"
+        android:textColor="#FFFFFFFF"
+        android:textSize="21sp"
+        android:textStyle="bold" />
 
-    <TextView
-        android:id="@+id/tv_game_id"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="游戏ID：加载中..."
-        android:textSize="16sp"
-        android:layout_marginBottom="10dp"/>
-
-    <TextView
-        android:id="@+id/tv_game_state"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="状态：加载中..."
-        android:textSize="16sp"
-        android:layout_marginBottom="10dp"/>
-
-    <TextView
-        android:id="@+id/tv_player_count"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="玩家数：加载中..."
-        android:textSize="16sp"
-        android:layout_marginBottom="10dp"/>
-
-    <TextView
-        android:id="@+id/tv_stake_amount"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="质押金额：加载中..."
-        android:textSize="16sp"
-        android:layout_marginBottom="10dp"/>
-
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="玩家与质押（StakingVault）"
-        android:textStyle="bold"
-        android:layout_marginBottom="6dp"/>
-
-    <ScrollView
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:fillViewport="true"
-        android:layout_marginBottom="12dp">
+        android:layout_marginTop="12dp"
+        android:background="@drawable/bg_bw_card"
+        android:orientation="vertical"
+        android:padding="12dp">
 
         <TextView
-            android:id="@+id/tv_player_list"
+            android:id="@+id/tv_game_id"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="加载中..."
-            android:textSize="14sp"
-            android:lineSpacingExtra="4dp"
-            android:fontFamily="monospace"/>
-    </ScrollView>
+            android:text="游戏ID：加载中..."
+            android:textColor="#FF000000"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/tv_game_state"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="状态：加载中..."
+            android:textColor="#FF000000"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/tv_player_count"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="玩家数：加载中..."
+            android:textColor="#FF000000"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/tv_stake_amount"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="质押金额：加载中..."
+            android:textColor="#FF000000"
+            android:textSize="15sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="10dp"
+        android:layout_weight="1"
+        android:background="@drawable/bg_bw_card"
+        android:orientation="vertical"
+        android:padding="12dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="玩家与质押（StakingVault）"
+            android:textColor="#FF000000"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="8dp"
+            android:background="#33000000" />
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:fillViewport="true">
+
+            <TextView
+                android:id="@+id/tv_player_list"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:lineSpacingExtra="4dp"
+                android:text="加载中..."
+                android:textColor="#FF111111"
+                android:textSize="13sp" />
+        </ScrollView>
+    </LinearLayout>
 
     <TextView
         android:id="@+id/tv_wait_tip"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="请等待其他玩家加入..."
-        android:textSize="14sp"
-        android:textColor="#888888"
+        android:layout_marginTop="10dp"
+        android:layout_marginBottom="10dp"
         android:gravity="center"
-        android:layout_marginTop="20dp"
-        android:layout_marginBottom="40dp"/>
+        android:text="请等待其他玩家加入..."
+        android:textColor="#FF555555"
+        android:textSize="13sp" />
 
     <Button
         android:id="@+id/btn_start_game"
         android:layout_width="match_parent"
         android:layout_height="50dp"
+        android:background="@drawable/bg_bw_button"
         android:text="开始游戏（房主）"
-        android:textSize="18sp"
-        android:background="#2196F3"
-        android:textColor="#ffffff"/>
+        android:textColor="#FFFFFFFF"
+        android:textSize="17sp"
+        android:textStyle="bold" />
 
 </LinearLayout>
