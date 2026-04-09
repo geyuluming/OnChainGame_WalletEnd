@@ -814,6 +814,9 @@ public class GameBattleActivity extends AppCompatActivity {
                         appendLog("[RECEIPT] events: CardTaken=" + hasCardTaken
                                 + ", GameEnded=" + hasGameEnded
                                 + ", RewardsDistributed=" + hasRewards);
+                        if ("0x1".equalsIgnoreCase(status) && hasGameEnded) {
+                            tryFinishGameFromReceiptLogs(logs);
+                        }
                         fetchPlayerCardsBrief(target, "[SNAPSHOT] targetAfter");
                         fetchPlayerCardsBrief(myAddress, "[SNAPSHOT] meAfter");
                     } catch (Exception e) {
@@ -985,6 +988,66 @@ public class GameBattleActivity extends AppCompatActivity {
         }
     }
 
+    /** 与链上 indexed gameId topic 一致：支持十进制或 0x 十六进制 gameId */
+    private BigInteger parseGameIdBigInt() {
+        try {
+            if (gameId == null || gameId.trim().isEmpty()) return BigInteger.ZERO;
+            String s = gameId.trim();
+            if (s.startsWith("0x") || s.startsWith("0X")) {
+                return new BigInteger(s.substring(2), 16);
+            }
+            return new BigInteger(s, 10);
+        } catch (Exception e) {
+            Log.w(TAG, "parseGameIdBigInt: " + gameId, e);
+            return BigInteger.ZERO;
+        }
+    }
+
+    /**
+     * 终局统一入口：收据里已能确定 GameEnded 时立即走这里，避免仅依赖 eth_getLogs 导致界面卡住。
+     */
+    private void onGameSettled(List<String> losers, List<String> winners, String source) {
+        if (gameOver) return;
+        gameOver = true;
+        isPolling = false;
+        isRefreshingHands = false;
+        handler.removeCallbacksAndMessages(null);
+
+        appendLog("\n========== 游戏结果（" + source + "） ==========");
+        appendLog("失败者：" + formatAddrList(losers));
+        appendLog("获胜者：" + formatAddrList(winners));
+        runOnUiThread(() -> {
+            tvResult.setText("本局已结束");
+            tvTargetHint.setText("本局已结束");
+            llOpponents.removeAllViews();
+            llMyHand.removeAllViews();
+            TextView end = new TextView(this);
+            end.setText("本局已结束");
+            end.setTextSize(14f);
+            llMyHand.addView(end);
+        });
+        queryRewardsDistributed(winners);
+    }
+
+    private void tryFinishGameFromReceiptLogs(JSONArray logs) {
+        if (gameOver || logs == null) return;
+        String sigGameEnded = "0x" + ABIUtils.getEventSignatureHash("GameEnded(uint256,address[],address[])");
+        for (int i = 0; i < logs.length(); i++) {
+            JSONObject lg = logs.optJSONObject(i);
+            if (lg == null) continue;
+            if (!roomAddress.equalsIgnoreCase(lg.optString("address", ""))) continue;
+            JSONArray topics = lg.optJSONArray("topics");
+            if (topics == null || topics.length() < 1) continue;
+            if (!sigGameEnded.equalsIgnoreCase(topics.optString(0, ""))) continue;
+            String data = lg.optString("data", "0x");
+            List<String> losers = new ArrayList<>();
+            List<String> winners = new ArrayList<>();
+            ABIUtils.decodeGameEndedLosersWinners(data, losers, winners);
+            onGameSettled(losers, winners, "收据 GameEnded");
+            return;
+        }
+    }
+
     private void queryGameResult() {
         if (gameOver) return;
         try {
@@ -996,7 +1059,7 @@ public class GameBattleActivity extends AppCompatActivity {
             filter.put("address", roomAddress);
             JSONArray topics = new JSONArray();
             topics.put("0x" + ABIUtils.getEventSignatureHash("GameEnded(uint256,address[],address[])"));
-            topics.put("0x" + String.format("%064x", new BigInteger(gameId)));
+            topics.put("0x" + String.format("%064x", parseGameIdBigInt()));
             filter.put("topics", topics);
             filter.put("fromBlock", "0x0");
             filter.put("toBlock", "latest");
@@ -1019,20 +1082,12 @@ public class GameBattleActivity extends AppCompatActivity {
                         JSONArray logs = res.optJSONArray("result");
                         if (logs == null || logs.length() <= 0) return;
 
-                        gameOver = true;
-                        isPolling = false;
-                        handler.removeCallbacksAndMessages(null);
                         JSONObject log = logs.getJSONObject(0);
                         String data = log.getString("data");
                         List<String> losers = new ArrayList<>();
                         List<String> winners = new ArrayList<>();
                         ABIUtils.decodeGameEndedLosersWinners(data, losers, winners);
-
-                        appendLog("\n========== 游戏结果 ==========");
-                        appendLog("失败者：" + formatAddrList(losers));
-                        appendLog("获胜者：" + formatAddrList(winners));
-                        runOnUiThread(() -> tvResult.setText("本局已结束"));
-                        queryRewardsDistributed(winners);
+                        onGameSettled(losers, winners, "eth_getLogs");
                     } catch (Exception e) {
                         Log.e(TAG, "解析结果异常", e);
                     }
@@ -1062,7 +1117,7 @@ public class GameBattleActivity extends AppCompatActivity {
             filter.put("address", GameConfig.STAKING_VAULT_ADDRESS);
             JSONArray topics = new JSONArray();
             topics.put("0x" + ABIUtils.getEventSignatureHash("RewardsDistributed(uint256,uint256,uint256)"));
-            topics.put("0x" + String.format("%064x", new BigInteger(gameId)));
+            topics.put("0x" + String.format("%064x", parseGameIdBigInt()));
             filter.put("topics", topics);
             filter.put("fromBlock", "0x0");
             filter.put("toBlock", "latest");
@@ -1163,6 +1218,7 @@ public class GameBattleActivity extends AppCompatActivity {
     private boolean shouldShowOnUi(String text) {
         if (text == null) return false;
         return text.startsWith("========== 游戏开始")
+                || text.trim().startsWith("========== 游戏结果")
                 || text.startsWith("游戏ID：")
                 || text.startsWith("房间地址：")
                 || text.startsWith("点击抽牌：")

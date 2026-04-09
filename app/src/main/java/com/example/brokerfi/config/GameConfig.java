@@ -8,8 +8,8 @@ public class GameConfig {
     //public static final String BROKERCHAIN_RPC = "dash.broker-chain.com";
 
     // 部署后的合约地址（替换为实际部署地址）
-    public static final String STAKING_VAULT_ADDRESS = "0xA5Bb3909C92e4371946a862C3096128a0C9bb25b";
-    public static final String GAME_FACTORY_ADDRESS = "0x02617263E9f880Af85011019aF7256E7b4773729";
+    public static final String STAKING_VAULT_ADDRESS = "0x83A95D452DB0743853e2Fcac57A5fc815bF4E5d8";
+    public static final String GAME_FACTORY_ADDRESS = "0xBAbCA55d77De68b09ab2941CBe3Dcde745c91355";
 
     /**
      * Chainlink VRF v2 订阅模式（可选）。
