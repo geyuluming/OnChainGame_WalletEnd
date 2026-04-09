@@ -13,47 +13,71 @@
         android:padding="12dp">
 
         <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#FF000000"
+            android:gravity="center"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp"
+            android:text="对战进行中"
+            android:textColor="#FFFFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <TextView
             android:id="@+id/tv_turn"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_bw_card"
+            android:padding="10dp"
             android:text="当前回合：加载中"
-            android:textStyle="bold"
-            android:textSize="16sp" />
+            android:textColor="#FF000000"
+            android:textSize="16sp"
+            android:textStyle="bold" />
 
         <TextView
             android:id="@+id/tv_target_hint"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
+            android:background="@drawable/bg_bw_card"
+            android:padding="10dp"
             android:text="轮到你时，点击下家牌背抽牌"
-            android:textSize="13sp"
-            android:textColor="#666666" />
+            android:textColor="#FF444444"
+            android:textSize="13sp" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
             android:text="其他玩家"
+            android:textColor="#FF000000"
             android:textStyle="bold" />
 
         <LinearLayout
             android:id="@+id/ll_opponents"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:background="@drawable/bg_bw_card"
             android:orientation="vertical"
-            android:layout_marginTop="6dp" />
+            android:padding="10dp" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:text="我的手牌"
+            android:textColor="#FF000000"
             android:textStyle="bold" />
 
         <HorizontalScrollView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
+            android:background="@drawable/bg_bw_card"
+            android:padding="8dp"
             android:scrollbars="none">
 
             <LinearLayout
@@ -161,13 +185,16 @@
             android:id="@+id/scroll_debug_log"
             android:layout_width="match_parent"
             android:layout_height="120dp"
-            android:layout_marginTop="12dp">
+            android:layout_marginTop="12dp"
+            android:background="@drawable/bg_bw_card">
 
             <TextView
                 android:id="@+id/tv_log"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:padding="8dp"
                 android:text=""
+                android:textColor="#FF333333"
                 android:textSize="12sp" />
         </ScrollView>
 
@@ -176,6 +203,8 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
+            android:background="@drawable/bg_bw_card"
+            android:padding="8dp"
             android:textSize="14sp"
             android:textColor="#FF000000" />
     </LinearLayout>

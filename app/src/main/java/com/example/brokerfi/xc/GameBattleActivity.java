@@ -1710,7 +1710,7 @@ public class GameBattleActivity extends AppCompatActivity {
             if (!rewardPanelHasConcreteAmounts) return;
             BigInteger totalStake = BigInteger.ZERO;
             for (String w : winnerCopy) {
-                totalStake = totalStake.add(stakes.getOrDefault(w.toLowerCase(), BigInteger.ZERO));
+                totalStake = totalStake.add(getStakeOrZero(stakes, w));
             }
             if (totalStake.compareTo(BigInteger.ZERO) <= 0) {
                 String base = tvRewardLineExtra.getText() == null ? "" : tvRewardLineExtra.getText().toString();
@@ -1721,7 +1721,7 @@ public class GameBattleActivity extends AppCompatActivity {
             StringBuilder detail = new StringBuilder();
             detail.append("\n\n获胜者分配明细（地址 / 分得奖励）：");
             for (String w : winnerCopy) {
-                BigInteger st = stakes.getOrDefault(w.toLowerCase(), BigInteger.ZERO);
+                BigInteger st = getStakeOrZero(stakes, w);
                 BigInteger reward = st.multiply(rewardPool).divide(totalStake);
                 detail.append("\n")
                         .append(w)
@@ -1732,6 +1732,12 @@ public class GameBattleActivity extends AppCompatActivity {
             String base = tvRewardLineExtra.getText() == null ? "" : tvRewardLineExtra.getText().toString();
             tvRewardLineExtra.setText(base + detail);
         });
+    }
+
+    private BigInteger getStakeOrZero(Map<String, BigInteger> stakes, String winnerAddr) {
+        if (stakes == null || winnerAddr == null) return BigInteger.ZERO;
+        BigInteger v = stakes.get(winnerAddr.toLowerCase());
+        return v == null ? BigInteger.ZERO : v;
     }
 
     private void fetchWinnerStakesSequentially(
