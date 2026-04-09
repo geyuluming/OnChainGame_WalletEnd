@@ -39,6 +39,9 @@ public class GameBattleActivity extends AppCompatActivity {
     private static final String TAG = "GameBattleActivity";
     /** 与合约 enum GameState 一致：ENDED = 3 */
     private static final BigInteger GAME_STATE_ENDED = BigInteger.valueOf(3);
+    /** 与 StakingVault 保持一致：FEE_RATE = 10/1000 (1%) */
+    private static final BigInteger VAULT_FEE_RATE_PER_MILLE = BigInteger.TEN;
+    private static final BigInteger PER_MILLE_BASE = BigInteger.valueOf(1000);
 
     private TextView tvLog, tvResult, tvTurn, tvTargetHint;
     private LinearLayout llOpponents, llMyHand;
@@ -91,6 +94,10 @@ public class GameBattleActivity extends AppCompatActivity {
 
     private interface StakeResultCallback {
         void onResult(BigInteger stake);
+    }
+
+    private interface JokerResultCallback {
+        void onResult(BigInteger jokerCount);
     }
 
     @Override
@@ -1252,7 +1259,7 @@ public class GameBattleActivity extends AppCompatActivity {
                             appendLog("========== 链上分配（推断） ==========");
                             appendLog("Vault gamePools(" + gid + ")=0，奖池已清空，分配已完成");
                             List<String> wcopy = winners == null ? null : new ArrayList<>(winners);
-                            runOnUiThread(() -> showRewardPanelPoolClearedHint(gid, wcopy));
+                            renderConcreteRewardsFromRoomState(wcopy, gid, "根据房间状态补算");
                         } else {
                             runOnUiThread(() -> showRewardPanelError(
                                     "未读到 RewardsDistributed，且 Vault 奖池仍为 " + fromWei(pool)
@@ -1273,6 +1280,132 @@ public class GameBattleActivity extends AppCompatActivity {
         } catch (Exception e) {
             Log.e(TAG, "runVaultGamePoolCheck", e);
             runOnUiThread(() -> showRewardPanelError(e.getMessage()));
+        }
+    }
+
+    /**
+     * 当事件日志缺失时，按房间状态补算具体分配，尽量与“正常日志路径”展示一致。
+     * - 总奖池：sum(playerData.stakeAmount)
+     * - 手续费：total * 10 / 1000
+     * - 可分配池：total - fee
+     * - 若 winners 为空，则用 jokerCount==0 推导赢家集合
+     * - 按赢家 stake 比例分配（与 Vault 一致）
+     */
+    private void renderConcreteRewardsFromRoomState(List<String> winnersFromEvent, BigInteger gid, String source) {
+        if (rewardPanelHasConcreteAmounts) return;
+        if (playerList == null || playerList.isEmpty()) {
+            runOnUiThread(() -> showRewardPanelPoolClearedHint(gid, winnersFromEvent));
+            return;
+        }
+        List<String> players = new ArrayList<>(playerList);
+        Map<String, BigInteger> stakeMap = new HashMap<>();
+        Map<String, BigInteger> jokerMap = new HashMap<>();
+        fetchRoomStateSequentially(players, 0, stakeMap, jokerMap, () -> {
+            if (rewardPanelHasConcreteAmounts) return;
+            BigInteger totalPool = BigInteger.ZERO;
+            for (String p : players) {
+                BigInteger st = getStakeOrZero(stakeMap, p);
+                totalPool = totalPool.add(st);
+            }
+            if (totalPool.compareTo(BigInteger.ZERO) <= 0) {
+                runOnUiThread(() -> showRewardPanelPoolClearedHint(gid, winnersFromEvent));
+                return;
+            }
+            BigInteger fee = totalPool.multiply(VAULT_FEE_RATE_PER_MILLE).divide(PER_MILLE_BASE);
+            BigInteger rewardPool = totalPool.subtract(fee);
+
+            List<String> winners = new ArrayList<>();
+            if (winnersFromEvent != null && !winnersFromEvent.isEmpty()) {
+                winners.addAll(winnersFromEvent);
+            } else {
+                for (String p : players) {
+                    BigInteger j = jokerMap.get(p.toLowerCase());
+                    if (j == null || j.compareTo(BigInteger.ZERO) == 0) {
+                        winners.add(p);
+                    }
+                }
+            }
+            if (winners.isEmpty()) {
+                runOnUiThread(() -> showRewardPanelPoolClearedHint(gid, winnersFromEvent));
+                return;
+            }
+            appendLog("========== 链上分配（补算） ==========");
+            appendLog("来源：" + source + " · gameId=" + gid);
+            appendLog("总奖池：" + fromWei(totalPool) + " BKC，手续费：" + fromWei(fee) + " BKC，分配池：" + fromWei(rewardPool) + " BKC");
+            BigInteger totalPoolFinal = totalPool;
+            BigInteger feeFinal = fee;
+            BigInteger rewardPoolFinal = rewardPool;
+            List<String> winnersFinal = new ArrayList<>(winners);
+            runOnUiThread(() -> showRewardPanelSuccess(totalPoolFinal, feeFinal, rewardPoolFinal, winnersFinal));
+        });
+    }
+
+    private void fetchRoomStateSequentially(
+            List<String> players,
+            int index,
+            Map<String, BigInteger> stakeMap,
+            Map<String, BigInteger> jokerMap,
+            Runnable done
+    ) {
+        if (index >= players.size()) {
+            if (done != null) done.run();
+            return;
+        }
+        String p = players.get(index);
+        fetchPlayerStakeAmountFromRoom(p, stake -> fetchPlayerJokerCountFromRoom(p, joker -> {
+            stakeMap.put(p.toLowerCase(), stake == null ? BigInteger.ZERO : stake);
+            jokerMap.put(p.toLowerCase(), joker == null ? BigInteger.ZERO : joker);
+            fetchRoomStateSequentially(players, index + 1, stakeMap, jokerMap, done);
+        }));
+    }
+
+    private void fetchPlayerJokerCountFromRoom(String player, JokerResultCallback cb) {
+        if (player == null || player.trim().isEmpty()) {
+            if (cb != null) cb.onResult(BigInteger.ZERO);
+            return;
+        }
+        try {
+            JSONObject callParams = new JSONObject();
+            callParams.put("from", myAddress);
+            callParams.put("to", roomAddress);
+            callParams.put("data", ABIUtils.encodeGetPlayerCards(player));
+            callParams.put("value", "0x0");
+
+            JSONArray params = new JSONArray();
+            params.put(callParams);
+            params.put("latest");
+
+            JSONObject req = new JSONObject();
+            req.put("jsonrpc", "2.0");
+            req.put("method", "eth_call");
+            req.put("params", params);
+            req.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, req.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        if (res.has("error")) {
+                            if (cb != null) cb.onResult(BigInteger.ZERO);
+                            return;
+                        }
+                        String raw = res.optString("result", "0x");
+                        BigInteger joker = ABIUtils.decodeUint256(raw, 10);
+                        if (cb != null) cb.onResult(joker == null ? BigInteger.ZERO : joker);
+                    } catch (Exception e) {
+                        if (cb != null) cb.onResult(BigInteger.ZERO);
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    if (cb != null) cb.onResult(BigInteger.ZERO);
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            if (cb != null) cb.onResult(BigInteger.ZERO);
         }
     }
 
