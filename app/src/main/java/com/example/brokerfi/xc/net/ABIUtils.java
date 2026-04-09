@@ -501,6 +501,17 @@ public class ABIUtils {
         return "0xd1f9c24d"; // gameState()
     }
 
+    /** GameRoom.gameId() → uint256，用于与链上事件 topic 对齐（避免 Intent 与合约不一致） */
+    public static String encodeGetRoomGameId() {
+        return selector("gameId()");
+    }
+
+    /** StakingVault.gamePools(uint256) */
+    public static String encodeVaultGamePools(BigInteger gameId) {
+        BigInteger gid = gameId != null ? gameId : BigInteger.ZERO;
+        return selector("gamePools(uint256)") + padLeft(gid.toString(16), 64);
+    }
+
     public static String encodeConfig() {
         return "0x79502c55"; // config()
     }
