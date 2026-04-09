@@ -11,6 +11,7 @@ import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
@@ -28,6 +29,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 战斗页：自己手牌正面扇出；他人牌背 +「?」，顺序与链上 handDisplaySeed 及 multiset 一致（与本人视角相同）。
@@ -35,9 +37,14 @@ import java.util.Map;
  */
 public class GameBattleActivity extends AppCompatActivity {
     private static final String TAG = "GameBattleActivity";
+    /** 与合约 enum GameState 一致：ENDED = 3 */
+    private static final BigInteger GAME_STATE_ENDED = BigInteger.valueOf(3);
 
     private TextView tvLog, tvResult, tvTurn, tvTargetHint;
     private LinearLayout llOpponents, llMyHand;
+    private ScrollView scrollBattleRoot;
+    private LinearLayout layoutRewardPanel;
+    private TextView tvRewardStatus, tvRewardLinePool, tvRewardLineFee, tvRewardLineWinner, tvRewardLineExtra;
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     private String gameId;
@@ -56,9 +63,13 @@ public class GameBattleActivity extends AppCompatActivity {
     /** 丢弃过期的异步刷新链，避免轮询重叠导致 UI 错乱 */
     private volatile int refreshSeq = 0;
 
+    /** 终局检测 eth_call，与手牌刷新队列解耦，避免被动玩家永远等不到 queryGameResult */
+    private final AtomicBoolean roomGameStatePollInFlight = new AtomicBoolean(false);
+    private final AtomicBoolean gameEndedBroadLogsInFlight = new AtomicBoolean(false);
+
     private final Map<String, PlayerHandCache> handCache = new HashMap<>();
     private final ArrayDeque<String> uiLogLines = new ArrayDeque<>();
-    private static final int UI_LOG_MAX = 24;
+    private static final int UI_LOG_MAX = 36;
 
     private static final class PlayerHandCache {
         BigInteger[] hand10 = new BigInteger[10];
@@ -72,12 +83,19 @@ public class GameBattleActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_game_battle);
 
+        scrollBattleRoot = findViewById(R.id.scroll_battle_root);
         tvLog = findViewById(R.id.tv_log);
         tvResult = findViewById(R.id.tv_result);
         tvTurn = findViewById(R.id.tv_turn);
         tvTargetHint = findViewById(R.id.tv_target_hint);
         llOpponents = findViewById(R.id.ll_opponents);
         llMyHand = findViewById(R.id.ll_my_hand);
+        layoutRewardPanel = findViewById(R.id.layout_reward_panel);
+        tvRewardStatus = findViewById(R.id.tv_reward_status);
+        tvRewardLinePool = findViewById(R.id.tv_reward_line_pool);
+        tvRewardLineFee = findViewById(R.id.tv_reward_line_fee);
+        tvRewardLineWinner = findViewById(R.id.tv_reward_line_winner);
+        tvRewardLineExtra = findViewById(R.id.tv_reward_line_extra);
 
         // 防止返回栈/重入导致看到上一局残留 UI
         synchronized (handCache) {
@@ -117,6 +135,9 @@ public class GameBattleActivity extends AppCompatActivity {
                     Log.w(TAG, "手牌刷新超时，解除刷新锁以继续轮询");
                     isRefreshingHands = false;
                 }
+            }
+            if (!gameOver) {
+                pollRoomGameEndedState();
             }
             if (!isRefreshingHands) {
                 pollTurnAndCards();
@@ -1025,6 +1046,7 @@ public class GameBattleActivity extends AppCompatActivity {
             end.setText("本局已结束");
             end.setTextSize(14f);
             llMyHand.addView(end);
+            showRewardPanelLoading();
         });
         queryRewardsDistributed(winners);
     }
@@ -1045,6 +1067,141 @@ public class GameBattleActivity extends AppCompatActivity {
             ABIUtils.decodeGameEndedLosersWinners(data, losers, winners);
             onGameSettled(losers, winners, "收据 GameEnded");
             return;
+        }
+    }
+
+    /**
+     * 周期性 eth_call gameState()；一旦为 ENDED 则拉取 GameEnded 日志并结算界面。
+     * 不依赖「当前是否正在刷新手牌」，解决旁观者客户端卡在加载中的问题。
+     */
+    private void pollRoomGameEndedState() {
+        if (gameOver || roomAddress == null || roomAddress.isEmpty()) return;
+        if (!roomGameStatePollInFlight.compareAndSet(false, true)) return;
+        try {
+            String data = ABIUtils.encodeGameState();
+            JSONObject callParams = new JSONObject();
+            callParams.put("from", myAddress);
+            callParams.put("to", roomAddress);
+            callParams.put("data", data);
+            callParams.put("value", "0x0");
+            JSONArray params = new JSONArray();
+            params.put(callParams);
+            params.put("latest");
+            JSONObject request = new JSONObject();
+            request.put("jsonrpc", "2.0");
+            request.put("method", "eth_call");
+            request.put("params", params);
+            request.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, request.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    roomGameStatePollInFlight.set(false);
+                    if (gameOver) return;
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        if (res.has("error")) return;
+                        String raw = res.optString("result", "0x");
+                        if (raw == null || raw.equals("0x") || raw.length() < 3) return;
+                        BigInteger st = ABIUtils.decodeUint256(raw, 0);
+                        if (GAME_STATE_ENDED.equals(st)) {
+                            requestGameEndedLogsBroadAndSettle();
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "pollRoomGameEndedState 解析", e);
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    roomGameStatePollInFlight.set(false);
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            roomGameStatePollInFlight.set(false);
+            Log.e(TAG, "pollRoomGameEndedState", e);
+        }
+    }
+
+    /**
+     * 仅按事件签名过滤 GameEnded，再在客户端比对 indexed gameId，避免双 topic 过滤与节点实现不一致导致查不到日志。
+     */
+    private void requestGameEndedLogsBroadAndSettle() {
+        if (gameOver || !gameEndedBroadLogsInFlight.compareAndSet(false, true)) return;
+        try {
+            JSONObject filter = new JSONObject();
+            filter.put("address", roomAddress);
+            JSONArray topics = new JSONArray();
+            topics.put("0x" + ABIUtils.getEventSignatureHash("GameEnded(uint256,address[],address[])"));
+            filter.put("topics", topics);
+            filter.put("fromBlock", "0x0");
+            filter.put("toBlock", "latest");
+
+            JSONArray rpcParams = new JSONArray();
+            rpcParams.put(filter);
+            JSONObject req = new JSONObject();
+            req.put("jsonrpc", "2.0");
+            req.put("method", "eth_getLogs");
+            req.put("params", rpcParams);
+            req.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, req.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    gameEndedBroadLogsInFlight.set(false);
+                    if (gameOver) return;
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        if (res.has("error")) {
+                            appendLog("GameEnded 宽查询出错：" + formatRpcError(res.optJSONObject("error")));
+                            onGameSettled(new ArrayList<>(), new ArrayList<>(), "合约已终局（日志 RPC 报错）");
+                            return;
+                        }
+                        JSONArray logs = res.optJSONArray("result");
+                        String wantTopic1 = "0x" + String.format("%064x", parseGameIdBigInt());
+                        if (logs != null && logs.length() > 0) {
+                            for (int i = logs.length() - 1; i >= 0; i--) {
+                                JSONObject lg = logs.optJSONObject(i);
+                                if (lg == null) continue;
+                                JSONArray tpc = lg.optJSONArray("topics");
+                                if (tpc == null || tpc.length() < 2) continue;
+                                if (!wantTopic1.equalsIgnoreCase(tpc.optString(1, ""))) continue;
+                                String data = lg.optString("data", "0x");
+                                List<String> losers = new ArrayList<>();
+                                List<String> winners = new ArrayList<>();
+                                ABIUtils.decodeGameEndedLosersWinners(data, losers, winners);
+                                onGameSettled(losers, winners, "eth_getLogs(宽·gameId 匹配)");
+                                return;
+                            }
+                            JSONObject last = logs.getJSONObject(logs.length() - 1);
+                            String data = last.getString("data");
+                            List<String> losers = new ArrayList<>();
+                            List<String> winners = new ArrayList<>();
+                            ABIUtils.decodeGameEndedLosersWinners(data, losers, winners);
+                            onGameSettled(losers, winners, "eth_getLogs(宽·末条)");
+                            return;
+                        }
+                        onGameSettled(new ArrayList<>(), new ArrayList<>(), "合约已终局（无 GameEnded 日志）");
+                    } catch (Exception e) {
+                        Log.e(TAG, "requestGameEndedLogsBroadAndSettle 解析", e);
+                        onGameSettled(new ArrayList<>(), new ArrayList<>(), "合约已终局（解析异常）");
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    gameEndedBroadLogsInFlight.set(false);
+                    if (!gameOver) {
+                        appendLog("GameEnded 宽查询网络错误：" + e.getMessage());
+                        onGameSettled(new ArrayList<>(), new ArrayList<>(), "合约已终局（网络）");
+                    }
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            gameEndedBroadLogsInFlight.set(false);
+            Log.e(TAG, "requestGameEndedLogsBroadAndSettle", e);
         }
     }
 
@@ -1117,7 +1274,6 @@ public class GameBattleActivity extends AppCompatActivity {
             filter.put("address", GameConfig.STAKING_VAULT_ADDRESS);
             JSONArray topics = new JSONArray();
             topics.put("0x" + ABIUtils.getEventSignatureHash("RewardsDistributed(uint256,uint256,uint256)"));
-            topics.put("0x" + String.format("%064x", parseGameIdBigInt()));
             filter.put("topics", topics);
             filter.put("fromBlock", "0x0");
             filter.put("toBlock", "latest");
@@ -1132,17 +1288,42 @@ public class GameBattleActivity extends AppCompatActivity {
                 public void onSuccess(String result) {
                     try {
                         JSONObject res = new JSONObject(result);
+                        if (res.has("error")) {
+                            String err = formatRpcError(res.optJSONObject("error"));
+                            if (attempt < 4) {
+                                handler.postDelayed(() -> queryRewardsDistributed(winners, attempt + 1), 2000);
+                                return;
+                            }
+                            appendLog("\n========== 链上分配 ==========");
+                            appendLog("查询 RewardsDistributed RPC 错误：" + err);
+                            runOnUiThread(() -> showRewardPanelError("RPC：" + err));
+                            return;
+                        }
                         JSONArray logs = res.optJSONArray("result");
-                        if (logs == null || logs.length() <= 0) {
+                        String wantGidTopic = "0x" + String.format("%064x", parseGameIdBigInt());
+                        JSONObject log = null;
+                        if (logs != null) {
+                            for (int i = logs.length() - 1; i >= 0; i--) {
+                                JSONObject lg = logs.optJSONObject(i);
+                                if (lg == null) continue;
+                                JSONArray tpc = lg.optJSONArray("topics");
+                                if (tpc == null || tpc.length() < 2) continue;
+                                if (!wantGidTopic.equalsIgnoreCase(tpc.optString(1, ""))) continue;
+                                log = lg;
+                                break;
+                            }
+                        }
+                        if (log == null) {
                             if (attempt < 4) {
                                 handler.postDelayed(() -> queryRewardsDistributed(winners, attempt + 1), 2000);
                                 return;
                             }
                             appendLog("\n========== 链上分配 ==========");
                             appendLog("未查到 RewardsDistributed 事件（已重试仍无，可检查 Vault 地址与 gameId）");
+                            runOnUiThread(() -> showRewardPanelError(
+                                    "未在 Vault 上找到本局 gameId 的 RewardsDistributed。\n请核对 GameConfig.STAKING_VAULT_ADDRESS 与链上部署是否一致。"));
                             return;
                         }
-                        JSONObject log = logs.getJSONObject(logs.length() - 1);
                         String data = log.getString("data");
                         BigInteger rewardPool = ABIUtils.decodeUint256(data, 0);
                         BigInteger fee = ABIUtils.decodeUint256(data, 1);
@@ -1157,23 +1338,83 @@ public class GameBattleActivity extends AppCompatActivity {
                             appendLog("获胜者地址数：" + winners.size());
                         }
 
-                        String summary = "已结束 · 手续费 " + fromWeiShort(fee) + " · 分配池 " + fromWeiShort(rewardPool);
-                        runOnUiThread(() -> tvResult.setText(summary));
+                        BigInteger totalBeforeFeeFinal = totalBeforeFee;
+                        BigInteger feeFinal = fee;
+                        BigInteger rewardPoolFinal = rewardPool;
+                        List<String> winnersCopy = winners == null ? null : new ArrayList<>(winners);
+                        runOnUiThread(() -> showRewardPanelSuccess(totalBeforeFeeFinal, feeFinal, rewardPoolFinal, winnersCopy));
                     } catch (Exception e) {
                         Log.e(TAG, "解析 RewardsDistributed 异常", e);
                         appendLog("解析分配事件失败：" + e.getMessage());
+                        runOnUiThread(() -> showRewardPanelError("解析链上事件失败：" + e.getMessage()));
                     }
                 }
 
                 @Override
                 public Void onError(Exception e) {
                     appendLog("查询 RewardsDistributed 失败：" + e.getMessage());
+                    runOnUiThread(() -> showRewardPanelError("网络请求失败：" + e.getMessage()));
                     return null;
                 }
             });
         } catch (Exception e) {
             Log.e(TAG, "queryRewardsDistributed异常", e);
         }
+    }
+
+    /** 终局后展开奖励面板：黑白描边样式，加载态 */
+    private void showRewardPanelLoading() {
+        if (layoutRewardPanel == null) return;
+        layoutRewardPanel.setVisibility(View.VISIBLE);
+        tvRewardStatus.setText("正在查询 StakingVault 的 RewardsDistributed 事件…");
+        tvRewardLinePool.setText("奖池（扣费前）　—");
+        tvRewardLineFee.setText("协议手续费　　　—");
+        tvRewardLineWinner.setText("获胜者分配池　　—");
+        tvRewardLineExtra.setText("说明：数值来自链上事件。若长时间无更新，请检查 RPC 与 GameConfig.STAKING_VAULT_ADDRESS。");
+        scrollToRewardPanel();
+    }
+
+    private void showRewardPanelSuccess(BigInteger totalBeforeFee, BigInteger fee, BigInteger rewardPool, List<String> winners) {
+        if (layoutRewardPanel == null) return;
+        layoutRewardPanel.setVisibility(View.VISIBLE);
+        tvRewardStatus.setText("链上分配已同步 · 本局 gameId " + (gameId != null ? gameId : "—"));
+        tvRewardLinePool.setText("奖池（扣费前）　" + fromWei(totalBeforeFee) + " BKC");
+        tvRewardLineFee.setText("协议手续费　　　" + fromWei(fee) + " BKC");
+        tvRewardLineWinner.setText("获胜者分配池　　" + fromWei(rewardPool) + " BKC");
+        StringBuilder ex = new StringBuilder();
+        ex.append("上述获胜者池按各获胜者在 Vault 中的质押比例在赢家之间分配。");
+        if (winners != null && !winners.isEmpty()) {
+            ex.append("\n本局获胜者 ").append(winners.size()).append(" 人。");
+            boolean imWin = false;
+            for (String w : winners) {
+                if (w != null && myAddress != null && w.equalsIgnoreCase(myAddress)) {
+                    imWin = true;
+                    break;
+                }
+            }
+            if (imWin) {
+                ex.append("\n你为本局获胜方之一。");
+            }
+        }
+        tvRewardLineExtra.setText(ex.toString());
+        tvResult.setText("已结束 · 手续费 " + fromWeiShort(fee) + " · 分配池 " + fromWeiShort(rewardPool));
+        scrollToRewardPanel();
+    }
+
+    private void showRewardPanelError(String message) {
+        if (layoutRewardPanel == null) return;
+        layoutRewardPanel.setVisibility(View.VISIBLE);
+        tvRewardStatus.setText("奖励分配数据未完整拉取");
+        tvRewardLinePool.setText("奖池（扣费前）　—");
+        tvRewardLineFee.setText("协议手续费　　　—");
+        tvRewardLineWinner.setText("获胜者分配池　　—");
+        tvRewardLineExtra.setText(message);
+        scrollToRewardPanel();
+    }
+
+    private void scrollToRewardPanel() {
+        if (scrollBattleRoot == null || layoutRewardPanel == null) return;
+        scrollBattleRoot.post(() -> scrollBattleRoot.smoothScrollTo(0, layoutRewardPanel.getTop()));
     }
 
     private String fromWei(BigInteger wei) {
@@ -1217,14 +1458,27 @@ public class GameBattleActivity extends AppCompatActivity {
 
     private boolean shouldShowOnUi(String text) {
         if (text == null) return false;
+        String t = text.trim();
         return text.startsWith("========== 游戏开始")
-                || text.trim().startsWith("========== 游戏结果")
+                || t.startsWith("========== 游戏结果")
+                || t.startsWith("========== 链上分配")
                 || text.startsWith("游戏ID：")
                 || text.startsWith("房间地址：")
+                || text.startsWith("失败者：")
+                || text.startsWith("获胜者：")
+                || text.startsWith("获胜者地址数：")
+                || text.startsWith("本局奖池")
+                || text.startsWith("协议手续费")
+                || text.startsWith("分给获胜者")
+                || text.startsWith("说明：")
+                || text.startsWith("未查到 RewardsDistributed")
+                || text.startsWith("查询 RewardsDistributed")
+                || text.startsWith("GameEnded 宽查询")
                 || text.startsWith("点击抽牌：")
                 || text.startsWith("抽牌已提交（网关）：")
                 || text.startsWith("抽牌已提交：")
                 || text.startsWith("抽牌失败")
+                || text.startsWith("解析分配事件失败")
                 || text.startsWith("[GATEWAY-RAW]")
                 || text.startsWith("[DEBUG]")
                 || text.startsWith("[RECEIPT]")
