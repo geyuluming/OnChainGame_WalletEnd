@@ -376,7 +376,11 @@ public class GameRoomWaitActivity extends AppCompatActivity {
                         }
                         BigInteger st = ABIUtils.decodeUint256(raw, 0);
                         // enum GameState { PENDING(0), DEALING(1), PLAYING(2), ENDED(3) }
-                        if (st.compareTo(BigInteger.valueOf(2)) >= 0) {
+                        if (st.equals(BigInteger.ZERO)) {
+                            gameStatus = "等待玩家";
+                        } else if (st.equals(BigInteger.ONE)) {
+                            gameStatus = "发牌中（等待随机数）";
+                        } else if (st.equals(BigInteger.valueOf(2))) {
                             gameStatus = "游戏中";
                             isWaiting = false;
                             runOnUiThread(() -> {
@@ -388,7 +392,10 @@ public class GameRoomWaitActivity extends AppCompatActivity {
                                 startActivity(intent);
                                 finish();
                             });
+                        } else {
+                            gameStatus = "已结束";
                         }
+                        updateUI();
                     } catch (Exception e) {
                         Log.e(TAG, "fetchGameStateByCall 解析异常", e);
                     }
@@ -544,6 +551,8 @@ public class GameRoomWaitActivity extends AppCompatActivity {
                 btnStartGame.setText("已满员，将自动开局");
             } else if (playerList.size() < minPlayers) {
                 btnStartGame.setText("人数不足，无法开始");
+            } else if (gameStatus.startsWith("发牌中")) {
+                btnStartGame.setText("发牌中，请等待");
             } else {
                 btnStartGame.setText("开始游戏（房主）");
             }

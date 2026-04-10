@@ -259,11 +259,6 @@ public class GameMainActivity extends AppCompatActivity {
             Log.i(TAG, "开始执行 ABI 编码...");
             String data = ABIUtils.encodeCreateGameRoomV2(
                     minPlayers, maxPlayers, minStake, maxStake, jokerCount, cardCounts,
-                    GameConfig.VRF_COORDINATOR_ADDRESS,
-                    GameConfig.VRF_SUBSCRIPTION_ID,
-                    GameConfig.VRF_KEY_HASH_HEX,
-                    GameConfig.VRF_CALLBACK_GAS_LIMIT,
-                    GameConfig.VRF_REQUEST_CONFIRMATIONS,
                     GameConfig.ECVRF_RELAY_ADDRESS
             );
             Log.i(TAG, "ABI 编码完成，data = " + data);
