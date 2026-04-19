@@ -389,7 +389,8 @@ public class GameRoomWaitActivity extends AppCompatActivity {
                                 Intent intent = new Intent(GameRoomWaitActivity.this, GameBattleActivity.class);
                                 intent.putExtra("gameId", gameId.toString());
                                 intent.putExtra("roomAddress", roomAddress);
-                                intent.putExtra("playerList", new ArrayList<>(playerList));
+                                // 必须用 putStringArrayListExtra，否则对战页 getStringArrayListExtra 常为 null，三人局手牌永远不拉
+                                intent.putStringArrayListExtra("playerList", new ArrayList<>(playerList));
                                 startActivity(intent);
                                 finish();
                             });

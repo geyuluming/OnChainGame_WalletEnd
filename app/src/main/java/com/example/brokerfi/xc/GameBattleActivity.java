@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.io.Serializable;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -66,6 +67,8 @@ public class GameBattleActivity extends AppCompatActivity {
     private volatile long refreshHandsStartedAtMs = 0L;
     /** 丢弃过期的异步刷新链，避免轮询重叠导致 UI 错乱 */
     private volatile int refreshSeq = 0;
+    /** 链上 getPlayers 同步节流，避免名单异常时空转 RPC */
+    private volatile long lastPlayerListSyncMs = 0L;
 
     /** 抽牌上链成功后短延迟再拉回合/手牌，避免与当前手牌刷新链重叠 */
     private final Runnable postPollAfterTakeRunnable = new Runnable() {
@@ -142,13 +145,19 @@ public class GameBattleActivity extends AppCompatActivity {
 
         gameId = getIntent().getStringExtra("gameId");
         roomAddress = getIntent().getStringExtra("roomAddress");
-        playerList = getIntent().getStringArrayListExtra("playerList");
-        myAddress = getCurrentWalletAddress();
+        myAddress = normalizeWalletAddress(getCurrentWalletAddress());
+        playerList = readPlayerListFromIntent();
 
-        if (playerList == null || playerList.isEmpty()) {
-            Toast.makeText(this, "玩家列表为空", Toast.LENGTH_SHORT).show();
+        if (roomAddress == null || roomAddress.trim().length() < 10) {
+            Toast.makeText(this, "房间地址无效", Toast.LENGTH_SHORT).show();
             finish();
             return;
+        }
+
+        boolean needPlayerSync = playerList.isEmpty() || !playerListContainsCurrentWallet();
+        if (needPlayerSync) {
+            appendLog("玩家列表需与链上对齐（Intent 缺失或与当前钱包不一致），正在 getPlayers…");
+            syncPlayerListFromRoom();
         }
 
         appendLog("========== 游戏开始 ==========");
@@ -166,6 +175,12 @@ public class GameBattleActivity extends AppCompatActivity {
         @Override
         public void run() {
             if (!isPolling) return;
+            if (!gameOver && playerList != null && playerList.isEmpty() && roomAddress != null) {
+                long t = System.currentTimeMillis();
+                if (t - lastPlayerListSyncMs > 5000L) {
+                    syncPlayerListFromRoom();
+                }
+            }
             // 看门狗：串行时 N 人需 2N 次 eth_call，弱网/节点慢时易超过固定阈值；超时后 bump seq 并主动重拉，避免半成品链永远不 rebuild。
             if (isRefreshingHands) {
                 long now = System.currentTimeMillis();
@@ -197,6 +212,119 @@ public class GameBattleActivity extends AppCompatActivity {
             return 1100L;
         }
         return 2600L;
+    }
+
+    private ArrayList<String> readPlayerListFromIntent() {
+        ArrayList<String> fromList = getIntent().getStringArrayListExtra("playerList");
+        if (fromList != null && !fromList.isEmpty()) {
+            return dedupeAddresses(fromList);
+        }
+        Serializable ser = getIntent().getSerializableExtra("playerList");
+        if (ser instanceof ArrayList) {
+            ArrayList<?> raw = (ArrayList<?>) ser;
+            ArrayList<String> out = new ArrayList<>();
+            for (Object o : raw) {
+                if (o == null) continue;
+                String a = normalizeWalletAddress(o.toString());
+                if (a.length() >= 10 && !listContainsAddressIgnoreCase(out, a)) out.add(a);
+            }
+            return out;
+        }
+        return new ArrayList<>();
+    }
+
+    private static String normalizeWalletAddress(String a) {
+        if (a == null) return "";
+        a = a.trim();
+        if (a.isEmpty()) return "";
+        if (!a.startsWith("0x") && !a.startsWith("0X")) a = "0x" + a;
+        return a;
+    }
+
+    private static ArrayList<String> dedupeAddresses(List<String> in) {
+        ArrayList<String> out = new ArrayList<>();
+        if (in == null) return out;
+        for (String p : in) {
+            String a = normalizeWalletAddress(p);
+            if (a.length() >= 10 && !listContainsAddressIgnoreCase(out, a)) out.add(a);
+        }
+        return out;
+    }
+
+    private static boolean listContainsAddressIgnoreCase(List<String> list, String addr) {
+        for (String x : list) {
+            if (x != null && x.equalsIgnoreCase(addr)) return true;
+        }
+        return false;
+    }
+
+    private boolean playerListContainsCurrentWallet() {
+        if (myAddress == null || myAddress.length() < 10) return false;
+        for (String p : playerList) {
+            if (p != null && p.equalsIgnoreCase(myAddress)) return true;
+        }
+        return false;
+    }
+
+    /** Intent 不可靠时用链上 getPlayers 与 players[] 对齐，否则不会 fetch 自己手牌，界面永久「加载中」 */
+    private void syncPlayerListFromRoom() {
+        if (roomAddress == null || roomAddress.length() < 10 || gameOver) return;
+        long now = System.currentTimeMillis();
+        if (lastPlayerListSyncMs > 0L && now - lastPlayerListSyncMs < 4500L) return;
+        lastPlayerListSyncMs = now;
+        try {
+            String data = ABIUtils.encodeGetPlayers();
+            JSONObject callParams = new JSONObject();
+            callParams.put("from", myAddress.length() >= 10 ? myAddress : "0x0000000000000000000000000000000000000000");
+            callParams.put("to", roomAddress);
+            callParams.put("data", data);
+            callParams.put("value", "0x0");
+            JSONArray params = new JSONArray();
+            params.put(callParams);
+            params.put("latest");
+            JSONObject request = new JSONObject();
+            request.put("jsonrpc", "2.0");
+            request.put("method", "eth_call");
+            request.put("params", params);
+            request.put("id", RequestIdGenerator.getNextId());
+
+            OkhttpUtils.getInstance().doPost(GameConfig.BROKERCHAIN_RPC, request.toString(), new MyCallBack() {
+                @Override
+                public void onSuccess(String result) {
+                    try {
+                        JSONObject res = new JSONObject(result);
+                        if (res.has("error")) {
+                            Log.w(TAG, "getPlayers RPC错误: " + res.optJSONObject("error"));
+                            return;
+                        }
+                        String raw = res.optString("result", "0x");
+                        List<String> addrs = ABIUtils.decodeAddressArray(raw, 0);
+                        ArrayList<String> next = new ArrayList<>();
+                        for (String p : addrs) {
+                            String a = normalizeWalletAddress(p);
+                            if (a.length() >= 10 && !listContainsAddressIgnoreCase(next, a)) next.add(a);
+                        }
+                        runOnUiThread(() -> {
+                            playerList = next;
+                            appendLog("链上玩家列表已同步：" + playerList.size() + " 人");
+                            if (!gameOver && isPolling) {
+                                handler.post(() -> pollTurnAndCards());
+                            }
+                        });
+                    } catch (Exception e) {
+                        Log.e(TAG, "syncPlayerListFromRoom 解析", e);
+                    }
+                }
+
+                @Override
+                public Void onError(Exception e) {
+                    Log.e(TAG, "syncPlayerListFromRoom 网络", e);
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "syncPlayerListFromRoom", e);
+        }
     }
 
     private void pollTurnAndCards() {
