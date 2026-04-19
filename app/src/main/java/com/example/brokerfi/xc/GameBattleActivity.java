@@ -30,6 +30,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 战斗页：自己手牌正面扇出；他人牌背 +「?」，顺序与链上 handDisplaySeed 及 multiset 一致（与本人视角相同）。
@@ -156,12 +157,17 @@ public class GameBattleActivity extends AppCompatActivity {
         @Override
         public void run() {
             if (!isPolling) return;
-            // 看门狗：如果刷新手牌卡住很久，允许继续轮询（避免“永远加载中”）
+            // 看门狗：串行时 N 人需 2N 次 eth_call，弱网/节点慢时易超过固定阈值；超时后 bump seq 并主动重拉，避免半成品链永远不 rebuild。
             if (isRefreshingHands) {
                 long now = System.currentTimeMillis();
-                if (now - refreshHandsStartedAtMs > 20_000L) {
-                    Log.w(TAG, "手牌刷新超时，解除刷新锁以继续轮询");
+                long limitMs = handsRefreshWatchdogLimitMs();
+                if (now - refreshHandsStartedAtMs > limitMs) {
+                    Log.w(TAG, "手牌刷新超时(" + limitMs + "ms)，作废本轮回调并解除刷新锁");
+                    refreshSeq++;
                     isRefreshingHands = false;
+                    if (!gameOver) {
+                        handler.post(() -> pollTurnAndCards());
+                    }
                 }
             }
             if (!gameOver) {
@@ -248,7 +254,7 @@ public class GameBattleActivity extends AppCompatActivity {
                         isRefreshingHands = true;
                         refreshHandsStartedAtMs = System.currentTimeMillis();
                         final int seq = ++refreshSeq;
-                        refreshAllPlayerHandsSequentially(0, seq);
+                        refreshAllPlayerHandsParallel(seq);
                     } catch (Exception e) {
                         Log.e(TAG, "解析目标异常", e);
                     }
@@ -274,15 +280,29 @@ public class GameBattleActivity extends AppCompatActivity {
         }
     }
 
-    /** 依次拉取每位玩家手牌 + 展示种子，避免并发乱序写缓存 */
-    private void refreshAllPlayerHandsSequentially(int index, int seq) {
+    /** 每人 2 次 eth_call；并行各玩家可显著缩短墙钟时间，避免 3～4 人局长期卡在「加载中」。缓存按地址写入，无跨玩家顺序依赖。 */
+    private long handsRefreshWatchdogLimitMs() {
+        int n = (playerList != null) ? playerList.size() : 2;
+        return 35_000L + (long) Math.max(0, n) * 12_000L;
+    }
+
+    private void refreshAllPlayerHandsParallel(int seq) {
         if (seq != refreshSeq) return;
-        if (gameOver || playerList == null || index >= playerList.size()) {
+        if (gameOver || playerList == null || playerList.isEmpty()) {
             if (seq != refreshSeq) return;
             runOnUiThread(this::rebuildAllHandsUi);
             return;
         }
-        fetchPlayerHand(playerList.get(index), () -> refreshAllPlayerHandsSequentially(index + 1, seq), seq);
+        final int n = playerList.size();
+        final AtomicInteger remaining = new AtomicInteger(n);
+        for (final String p : playerList) {
+            fetchPlayerHand(p, () -> {
+                if (seq != refreshSeq) return;
+                if (remaining.decrementAndGet() == 0) {
+                    runOnUiThread(this::rebuildAllHandsUi);
+                }
+            }, seq);
+        }
     }
 
     private void fetchPlayerHand(String player, Runnable next, int seq) {

@@ -315,7 +315,8 @@ public class GameRoomWaitActivity extends AppCompatActivity {
                         List<String> addrs = ABIUtils.decodeAddressArray(raw, 0);
                         playerList.clear();
                         playerStakeMap.clear();
-                        totalStake = BigInteger.ZERO;
+                        // 不在此处将 totalStake 置 0：质押查询为异步，若随后 updateUI()/fetchGameState
+                        // 先于 refreshStakesFromRoomPlayerData 完成，会出现「总质押 0、列表仍为旧值」的闪烁。
                         for (String p : addrs) {
                             if (p == null || p.length() < 10) continue;
                             if (!playerList.contains(p)) playerList.add(p);
@@ -422,7 +423,12 @@ public class GameRoomWaitActivity extends AppCompatActivity {
     private void refreshStakesFromRoomPlayerData() {
         if (gameId == null) return;
         if (playerList.isEmpty()) {
-            runOnUiThread(() -> tvPlayerList.setText("暂无玩家"));
+            runOnUiThread(() -> {
+                totalStake = BigInteger.ZERO;
+                tvPlayerList.setText("暂无玩家");
+                tvStakeAmount.setText("总质押：" + fromWei(totalStake) + " BKC");
+                updateUI();
+            });
             return;
         }
         final AtomicInteger pending = new AtomicInteger(playerList.size());
