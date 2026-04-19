@@ -67,6 +67,15 @@ public class GameBattleActivity extends AppCompatActivity {
     /** 丢弃过期的异步刷新链，避免轮询重叠导致 UI 错乱 */
     private volatile int refreshSeq = 0;
 
+    /** 抽牌上链成功后短延迟再拉回合/手牌，避免与当前手牌刷新链重叠 */
+    private final Runnable postPollAfterTakeRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!isPolling || gameOver) return;
+            pollTurnAndCards();
+        }
+    };
+
     /** 终局检测 eth_call，与手牌刷新队列解耦，避免被动玩家永远等不到 queryGameResult */
     private final AtomicBoolean roomGameStatePollInFlight = new AtomicBoolean(false);
     private final AtomicBoolean gameEndedBroadLogsInFlight = new AtomicBoolean(false);
@@ -177,9 +186,18 @@ public class GameBattleActivity extends AppCompatActivity {
                 pollTurnAndCards();
                 queryGameResult();
             }
-            handler.postDelayed(this, 3000);
+            handler.postDelayed(this, nextPollDelayMs());
         }
     };
+
+    /** 自己回合时略加快轮询；其余略缩短默认间隔，减轻「三人局很肉」的体感 */
+    private long nextPollDelayMs() {
+        if (gameOver) return 3500L;
+        if (myAddress != null && myAddress.equalsIgnoreCase(currentTurnPlayer)) {
+            return 1100L;
+        }
+        return 2600L;
+    }
 
     private void pollTurnAndCards() {
         if (gameOver) return;
@@ -272,12 +290,63 @@ public class GameBattleActivity extends AppCompatActivity {
 
     private void updateTargetHint() {
         if (gameOver) return;
-        String t = shortAddr(currentTargetPlayer);
+        String eff = resolveTakeTargetForAction();
+        if (isZeroAddr(eff)) {
+            if (myAddress.equalsIgnoreCase(currentTurnPlayer)) {
+                tvTargetHint.setText("轮到你 · 暂无可抽牌目标（即将终局或链上同步中）");
+            } else {
+                tvTargetHint.setText("等待 " + shortAddr(currentTurnPlayer) + " · 暂无可抽目标");
+            }
+            return;
+        }
+        String t = shortAddr(eff);
         if (myAddress.equalsIgnoreCase(currentTurnPlayer)) {
             tvTargetHint.setText("轮到你 · 下家 " + t + " · 点击其牌背抽一张（顺序与TA自己手牌一致）");
         } else {
             tvTargetHint.setText("等待 " + shortAddr(currentTurnPlayer) + " · 下家 " + t);
         }
+    }
+
+    /**
+     * 与链上「顺时针下一位仍有牌」一致；已知某座位手牌 multiset 为空时跳过，避免 RPC 仍返回已观战下家导致点错人。
+     * playerList 顺序须与合约 players[] 一致（由等待页 getPlayers 传入）。
+     */
+    private String resolveTakeTargetForAction() {
+        if (playerList == null || playerList.isEmpty()) return currentTargetPlayer;
+        int turnIdx = indexInPlayerList(currentTurnPlayer);
+        if (turnIdx < 0) return currentTargetPlayer;
+        int n = playerList.size();
+        for (int k = 1; k <= n; k++) {
+            int idx = (turnIdx + k) % n;
+            String candidate = playerList.get(idx);
+            if (handCacheShowsEmpty(candidate)) continue;
+            if (handCacheShowsHasCards(candidate)) return candidate;
+            return candidate;
+        }
+        return currentTargetPlayer;
+    }
+
+    private int indexInPlayerList(String addr) {
+        if (addr == null || playerList == null) return -1;
+        for (int i = 0; i < playerList.size(); i++) {
+            if (playerList.get(i).equalsIgnoreCase(addr)) return i;
+        }
+        return -1;
+    }
+
+    private boolean handCacheShowsEmpty(String player) {
+        PlayerHandCache c = cacheFor(player);
+        return c != null && (c.order == null || c.order.isEmpty());
+    }
+
+    private boolean handCacheShowsHasCards(String player) {
+        PlayerHandCache c = cacheFor(player);
+        return c != null && c.order != null && !c.order.isEmpty();
+    }
+
+    private static boolean isZeroAddr(String a) {
+        return a == null || a.trim().isEmpty()
+                || a.equalsIgnoreCase("0x0000000000000000000000000000000000000000");
     }
 
     /** 每人 2 次 eth_call；并行各玩家可显著缩短墙钟时间，避免 3～4 人局长期卡在「加载中」。缓存按地址写入，无跨玩家顺序依赖。 */
@@ -417,7 +486,7 @@ public class GameBattleActivity extends AppCompatActivity {
         llMyHand.removeAllViews();
 
         boolean myTurn = myAddress.equalsIgnoreCase(currentTurnPlayer);
-        String targetKey = currentTargetPlayer != null ? currentTargetPlayer.toLowerCase() : "";
+        String effDrawTarget = resolveTakeTargetForAction();
 
         for (String p : playerList) {
             if (p.equalsIgnoreCase(myAddress)) continue;
@@ -431,7 +500,7 @@ public class GameBattleActivity extends AppCompatActivity {
             row.setPadding(0, m, 0, m);
 
             TextView label = new TextView(this);
-            boolean isTarget = p.equalsIgnoreCase(currentTargetPlayer);
+            boolean isTarget = p.equalsIgnoreCase(effDrawTarget);
             label.setText(shortAddr(p) + (isTarget ? "  ← 抽牌目标" : ""));
             label.setTextSize(13f);
             row.addView(label);
@@ -442,9 +511,13 @@ public class GameBattleActivity extends AppCompatActivity {
             cardRow.setOrientation(LinearLayout.HORIZONTAL);
             hsv.addView(cardRow);
 
-            if (cache == null || cache.order.isEmpty()) {
+            if (cache == null) {
                 TextView empty = new TextView(this);
                 empty.setText("加载中…");
+                cardRow.addView(empty);
+            } else if (cache.order.isEmpty()) {
+                TextView empty = new TextView(this);
+                empty.setText("无手牌（观战）");
                 cardRow.addView(empty);
             } else {
                 for (int slot = 0; slot < cache.order.size(); slot++) {
@@ -458,9 +531,13 @@ public class GameBattleActivity extends AppCompatActivity {
         }
 
         PlayerHandCache mine = cacheFor(myAddress);
-        if (mine == null || mine.order.isEmpty()) {
+        if (mine == null) {
             TextView tv = new TextView(this);
             tv.setText("我的手牌加载中…");
+            llMyHand.addView(tv);
+        } else if (mine.order.isEmpty()) {
+            TextView tv = new TextView(this);
+            tv.setText("手牌已清空，观战中（等待结算）");
             llMyHand.addView(tv);
         } else {
             for (int cardNum : mine.order) {
@@ -469,6 +546,7 @@ public class GameBattleActivity extends AppCompatActivity {
         }
         // 刷新链完成，释放锁
         isRefreshingHands = false;
+        updateTargetHint();
     }
 
     private int dp(int d) {
@@ -529,9 +607,11 @@ public class GameBattleActivity extends AppCompatActivity {
             appendLog("点击抽牌被拦截：!turn，currentTurn=" + shortAddr(currentTurnPlayer) + ", me=" + shortAddr(myAddress));
             return;
         }
-        if (!ownerAddr.equalsIgnoreCase(currentTargetPlayer)) {
-            Toast.makeText(this, "只能抽下家的牌", Toast.LENGTH_SHORT).show();
-            appendLog("点击抽牌被拦截：!target，clicked=" + shortAddr(ownerAddr) + ", target=" + shortAddr(currentTargetPlayer));
+        String allowedTarget = resolveTakeTargetForAction();
+        if (!ownerAddr.equalsIgnoreCase(allowedTarget)) {
+            Toast.makeText(this, "只能抽「当前下家」的牌（下家已按手牌状态更新）", Toast.LENGTH_SHORT).show();
+            appendLog("点击抽牌被拦截：!target，clicked=" + shortAddr(ownerAddr) + ", effTarget=" + shortAddr(allowedTarget)
+                    + ", rpcTarget=" + shortAddr(currentTargetPlayer));
             return;
         }
         PlayerHandCache c = cacheFor(ownerAddr);
@@ -890,6 +970,10 @@ public class GameBattleActivity extends AppCompatActivity {
                         }
                         if ("0x1".equalsIgnoreCase(status)) {
                             applyRewardsFromTxReceiptLogs(logs);
+                        }
+                        if ("0x1".equalsIgnoreCase(status) && hasCardTaken) {
+                            handler.removeCallbacks(postPollAfterTakeRunnable);
+                            handler.postDelayed(postPollAfterTakeRunnable, 280);
                         }
                         fetchPlayerCardsBrief(target, "[SNAPSHOT] targetAfter");
                         fetchPlayerCardsBrief(myAddress, "[SNAPSHOT] meAfter");
@@ -2067,6 +2151,7 @@ public class GameBattleActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
         isPolling = false;
+        handler.removeCallbacks(postPollAfterTakeRunnable);
         handler.removeCallbacksAndMessages(null);
     }
 }
