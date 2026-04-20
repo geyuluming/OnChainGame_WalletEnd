@@ -312,7 +312,6 @@ public class GameJoinActivity extends AppCompatActivity {
 
     /**
      * 用本地私钥签名并通过 eth_sendRawTransaction 发送 joinGame。
-     * 这样链上 from 才会等于当前钱包地址，不会被节点默认账户代发。
      */
     private void sendJoinTxRawSigned(JSONObject txParams, TxHashCallback cb, Runnable onFallback) {
         try {

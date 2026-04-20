@@ -39,6 +39,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class GameBattleActivity extends AppCompatActivity {
     private static final String TAG = "GameBattleActivity";
+    /** Logcat 搜索此关键字即可过滤 getPlayers / 玩家列表同步相关日志（勿删） */
+    private static final String LOG_PREFIX_PLAYERS = "[GET_PLAYERS]";
     /** 与合约 enum GameState 一致：ENDED = 3 */
     private static final BigInteger GAME_STATE_ENDED = BigInteger.valueOf(3);
     /** 与 StakingVault 保持一致：FEE_RATE = 10/1000 (1%) */
@@ -156,9 +158,26 @@ public class GameBattleActivity extends AppCompatActivity {
 
         boolean needPlayerSync = playerList.isEmpty() || !playerListContainsCurrentWallet();
         if (needPlayerSync) {
-            appendLog("玩家列表需与链上对齐（Intent 缺失或与当前钱包不一致），正在 getPlayers…");
+            Log.i(TAG, LOG_PREFIX_PLAYERS + " Intent 缺失或与钱包不一致，调用 syncPlayerListFromRoom");
+            appendLog(LOG_PREFIX_PLAYERS + " 玩家列表需与链上对齐（Intent 缺失或与当前钱包不一致），正在 getPlayers…");
             syncPlayerListFromRoom();
         }
+        handler.postDelayed(() -> {
+            if (isFinishing() || gameOver) return;
+            if (playerList != null && !playerList.isEmpty()) return;
+            Log.i(TAG, LOG_PREFIX_PLAYERS + " 延迟 700ms 重试 getPlayers");
+            appendLog(LOG_PREFIX_PLAYERS + " 玩家列表仍为空，延迟重试 getPlayers…");
+            lastPlayerListSyncMs = 0L;
+            syncPlayerListFromRoom();
+        }, 700);
+        handler.postDelayed(() -> {
+            if (isFinishing() || gameOver) return;
+            if (playerList != null && !playerList.isEmpty()) return;
+            Log.i(TAG, LOG_PREFIX_PLAYERS + " 延迟 2800ms 二次重试 getPlayers");
+            appendLog(LOG_PREFIX_PLAYERS + " 玩家列表仍为空，二次延迟 getPlayers…");
+            lastPlayerListSyncMs = 0L;
+            syncPlayerListFromRoom();
+        }, 2800);
 
         appendLog("========== 游戏开始 ==========");
         appendLog("游戏ID：" + gameId);
@@ -186,8 +205,7 @@ public class GameBattleActivity extends AppCompatActivity {
                 long now = System.currentTimeMillis();
                 long limitMs = handsRefreshWatchdogLimitMs();
                 if (now - refreshHandsStartedAtMs > limitMs) {
-                    Log.w(TAG, "手牌刷新超时(" + limitMs + "ms)，作废本轮回调并解除刷新锁");
-                    refreshSeq++;
+                    Log.w(TAG, "手牌刷新超时(" + limitMs + "ms)，解除刷新锁（不 bump seq，避免丢弃即将写入手牌缓存的回调）");
                     isRefreshingHands = false;
                     if (!gameOver) {
                         handler.post(() -> pollTurnAndCards());
@@ -258,6 +276,12 @@ public class GameBattleActivity extends AppCompatActivity {
         return false;
     }
 
+    /** 部分节点拒绝 eth_call 的 from 为空；交易签名仍用真实 myAddress */
+    private String ethCallFromAddress() {
+        if (myAddress != null && myAddress.length() >= 10) return myAddress;
+        return "0x0000000000000000000000000000000000000000";
+    }
+
     private boolean playerListContainsCurrentWallet() {
         if (myAddress == null || myAddress.length() < 10) return false;
         for (String p : playerList) {
@@ -275,7 +299,7 @@ public class GameBattleActivity extends AppCompatActivity {
         try {
             String data = ABIUtils.encodeGetPlayers();
             JSONObject callParams = new JSONObject();
-            callParams.put("from", myAddress.length() >= 10 ? myAddress : "0x0000000000000000000000000000000000000000");
+            callParams.put("from", ethCallFromAddress());
             callParams.put("to", roomAddress);
             callParams.put("data", data);
             callParams.put("value", "0x0");
@@ -294,7 +318,9 @@ public class GameBattleActivity extends AppCompatActivity {
                     try {
                         JSONObject res = new JSONObject(result);
                         if (res.has("error")) {
-                            Log.w(TAG, "getPlayers RPC错误: " + res.optJSONObject("error"));
+                            String err = res.optJSONObject("error") != null ? res.optJSONObject("error").toString() : res.optString("error");
+                            Log.w(TAG, LOG_PREFIX_PLAYERS + " RPC错误: " + err);
+                            runOnUiThread(() -> appendLog(LOG_PREFIX_PLAYERS + " 失败：" + err));
                             return;
                         }
                         String raw = res.optString("result", "0x");
@@ -306,24 +332,37 @@ public class GameBattleActivity extends AppCompatActivity {
                         }
                         runOnUiThread(() -> {
                             playerList = next;
-                            appendLog("链上玩家列表已同步：" + playerList.size() + " 人");
+                            if (playerList.isEmpty()) {
+                                String msg = LOG_PREFIX_PLAYERS + " 解析人数为 0（检查 room 是否为 GameRoom、RPC 是否同链）。raw.len="
+                                        + (raw != null ? raw.length() : 0);
+                                Log.w(TAG, msg);
+                                if (raw != null && raw.length() > 4) {
+                                    int n = Math.min(raw.length(), 200);
+                                    Log.w(TAG, LOG_PREFIX_PLAYERS + " raw.prefix=" + raw.substring(0, n));
+                                }
+                                appendLog(msg);
+                            } else {
+                                Log.i(TAG, LOG_PREFIX_PLAYERS + " 链上玩家列表已同步：" + playerList.size() + " 人");
+                                appendLog(LOG_PREFIX_PLAYERS + " 链上玩家列表已同步：" + playerList.size() + " 人");
+                            }
                             if (!gameOver && isPolling) {
                                 handler.post(() -> pollTurnAndCards());
                             }
                         });
                     } catch (Exception e) {
-                        Log.e(TAG, "syncPlayerListFromRoom 解析", e);
+                        Log.e(TAG, LOG_PREFIX_PLAYERS + " 响应解析异常", e);
                     }
                 }
 
                 @Override
                 public Void onError(Exception e) {
-                    Log.e(TAG, "syncPlayerListFromRoom 网络", e);
+                    Log.e(TAG, LOG_PREFIX_PLAYERS + " 网络错误", e);
+                    runOnUiThread(() -> appendLog(LOG_PREFIX_PLAYERS + " 网络错误：" + (e.getMessage() != null ? e.getMessage() : e.toString())));
                     return null;
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "syncPlayerListFromRoom", e);
+            Log.e(TAG, LOG_PREFIX_PLAYERS + " syncPlayerListFromRoom 构造请求失败", e);
         }
     }
 
@@ -332,7 +371,7 @@ public class GameBattleActivity extends AppCompatActivity {
         try {
             String data = ABIUtils.encodeGetCurrentTurnPlayer();
             JSONObject callParams = new JSONObject();
-            callParams.put("from", myAddress);
+            callParams.put("from", ethCallFromAddress());
             callParams.put("to", roomAddress);
             callParams.put("data", data);
             callParams.put("value", "0x0");
@@ -352,6 +391,10 @@ public class GameBattleActivity extends AppCompatActivity {
                 public void onSuccess(String result) {
                     try {
                         JSONObject res = new JSONObject(result);
+                        if (res.has("error")) {
+                            appendLog("getCurrentTurnPlayer 错误：" + res.optJSONObject("error"));
+                            return;
+                        }
                         currentTurnPlayer = ABIUtils.decodeAddress(res.optString("result", "0x"));
                         runOnUiThread(() -> tvTurn.setText("当前回合：" + shortAddr(currentTurnPlayer)));
                         queryTakeTarget();
@@ -375,7 +418,7 @@ public class GameBattleActivity extends AppCompatActivity {
         try {
             String data = ABIUtils.encodeGetTakeTarget();
             JSONObject callParams = new JSONObject();
-            callParams.put("from", myAddress);
+            callParams.put("from", ethCallFromAddress());
             callParams.put("to", roomAddress);
             callParams.put("data", data);
             callParams.put("value", "0x0");
@@ -395,24 +438,37 @@ public class GameBattleActivity extends AppCompatActivity {
                 public void onSuccess(String result) {
                     try {
                         JSONObject res = new JSONObject(result);
+                        if (res.has("error")) {
+                            appendLog("getTakeTarget 错误：" + res.optJSONObject("error"));
+                            isRefreshingHands = false;
+                            return;
+                        }
                         currentTargetPlayer = ABIUtils.decodeAddress(res.optString("result", "0x"));
                         runOnUiThread(() -> updateTargetHint());
+                        if (playerList == null || playerList.isEmpty()) {
+                            isRefreshingHands = false;
+                            runOnUiThread(() -> rebuildAllHandsUi());
+                            return;
+                        }
                         isRefreshingHands = true;
                         refreshHandsStartedAtMs = System.currentTimeMillis();
                         final int seq = ++refreshSeq;
                         refreshAllPlayerHandsParallel(seq);
                     } catch (Exception e) {
                         Log.e(TAG, "解析目标异常", e);
+                        isRefreshingHands = false;
                     }
                 }
 
                 @Override
                 public Void onError(Exception e) {
+                    isRefreshingHands = false;
                     return null;
                 }
             });
         } catch (Exception e) {
             Log.e(TAG, "queryTakeTarget异常", e);
+            isRefreshingHands = false;
         }
     }
 
@@ -486,7 +542,7 @@ public class GameBattleActivity extends AppCompatActivity {
     private void refreshAllPlayerHandsParallel(int seq) {
         if (seq != refreshSeq) return;
         if (gameOver || playerList == null || playerList.isEmpty()) {
-            if (seq != refreshSeq) return;
+            isRefreshingHands = false;
             runOnUiThread(this::rebuildAllHandsUi);
             return;
         }
@@ -506,7 +562,7 @@ public class GameBattleActivity extends AppCompatActivity {
         try {
             String data = ABIUtils.encodeGetPlayerCards(player);
             JSONObject callParams = new JSONObject();
-            callParams.put("from", myAddress);
+            callParams.put("from", ethCallFromAddress());
             callParams.put("to", roomAddress);
             callParams.put("data", data);
             callParams.put("value", "0x0");
@@ -524,6 +580,11 @@ public class GameBattleActivity extends AppCompatActivity {
                 public void onSuccess(String result) {
                     try {
                         JSONObject res = new JSONObject(result);
+                        if (res.has("error")) {
+                            Log.w(TAG, "getPlayerCards error " + player + " " + res.optJSONObject("error"));
+                            if (seq == refreshSeq && next != null) next.run();
+                            return;
+                        }
                         String raw = res.optString("result", "0x");
                         BigInteger[] cards = ABIUtils.decodeUint256Array(raw, 0, 10);
                         BigInteger joker = ABIUtils.decodeUint256(raw, 10);
@@ -550,7 +611,7 @@ public class GameBattleActivity extends AppCompatActivity {
         try {
             String data = ABIUtils.encodeHandDisplaySeed(player);
             JSONObject callParams = new JSONObject();
-            callParams.put("from", myAddress);
+            callParams.put("from", ethCallFromAddress());
             callParams.put("to", roomAddress);
             callParams.put("data", data);
             callParams.put("value", "0x0");
@@ -568,6 +629,11 @@ public class GameBattleActivity extends AppCompatActivity {
                 public void onSuccess(String result) {
                     try {
                         JSONObject res = new JSONObject(result);
+                        if (res.has("error")) {
+                            Log.w(TAG, "handDisplaySeed error " + player + " " + res.optJSONObject("error"));
+                            if (seq == refreshSeq && next != null) next.run();
+                            return;
+                        }
                         String raw = res.optString("result", "0x");
                         BigInteger seed = ABIUtils.decodeUint256(raw, 0);
                         PlayerHandCache c = new PlayerHandCache();
@@ -786,7 +852,7 @@ public class GameBattleActivity extends AppCompatActivity {
     private void precheckTakeCardThenSend(String target, int cardNumber, String data) {
         try {
             JSONObject callParams = new JSONObject();
-            callParams.put("from", myAddress);
+            callParams.put("from", ethCallFromAddress());
             callParams.put("to", roomAddress);
             callParams.put("data", data);
             callParams.put("value", "0x0");
@@ -1124,7 +1190,7 @@ public class GameBattleActivity extends AppCompatActivity {
     private void fetchPlayerCardsBrief(String player, String prefix) {
         try {
             JSONObject callParams = new JSONObject();
-            callParams.put("from", myAddress);
+            callParams.put("from", ethCallFromAddress());
             callParams.put("to", roomAddress);
             callParams.put("data", ABIUtils.encodeGetPlayerCards(player));
             callParams.put("value", "0x0");
@@ -1186,7 +1252,7 @@ public class GameBattleActivity extends AppCompatActivity {
     private void debugCurrentTurn() {
         try {
             JSONObject callParams = new JSONObject();
-            callParams.put("from", myAddress);
+            callParams.put("from", ethCallFromAddress());
             callParams.put("to", roomAddress);
             callParams.put("data", ABIUtils.encodeGetCurrentTurnPlayer());
             callParams.put("value", "0x0");
@@ -1223,7 +1289,7 @@ public class GameBattleActivity extends AppCompatActivity {
     private void debugTakeTarget() {
         try {
             JSONObject callParams = new JSONObject();
-            callParams.put("from", myAddress);
+            callParams.put("from", ethCallFromAddress());
             callParams.put("to", roomAddress);
             callParams.put("data", ABIUtils.encodeGetTakeTarget());
             callParams.put("value", "0x0");
@@ -1310,7 +1376,7 @@ public class GameBattleActivity extends AppCompatActivity {
         try {
             String data = ABIUtils.encodeGetRoomGameId();
             JSONObject callParams = new JSONObject();
-            callParams.put("from", myAddress);
+            callParams.put("from", ethCallFromAddress());
             callParams.put("to", roomAddress);
             callParams.put("data", data);
             callParams.put("value", "0x0");
@@ -1461,7 +1527,7 @@ public class GameBattleActivity extends AppCompatActivity {
         try {
             String calldata = ABIUtils.encodeVaultGamePools(gid);
             JSONObject callParams = new JSONObject();
-            callParams.put("from", myAddress);
+            callParams.put("from", ethCallFromAddress());
             callParams.put("to", GameConfig.STAKING_VAULT_ADDRESS);
             callParams.put("data", calldata);
             callParams.put("value", "0x0");
@@ -1598,7 +1664,7 @@ public class GameBattleActivity extends AppCompatActivity {
         }
         try {
             JSONObject callParams = new JSONObject();
-            callParams.put("from", myAddress);
+            callParams.put("from", ethCallFromAddress());
             callParams.put("to", roomAddress);
             callParams.put("data", ABIUtils.encodeGetPlayerCards(player));
             callParams.put("value", "0x0");
@@ -1723,7 +1789,7 @@ public class GameBattleActivity extends AppCompatActivity {
         try {
             String data = ABIUtils.encodeGameState();
             JSONObject callParams = new JSONObject();
-            callParams.put("from", myAddress);
+            callParams.put("from", ethCallFromAddress());
             callParams.put("to", roomAddress);
             callParams.put("data", data);
             callParams.put("value", "0x0");
@@ -2130,7 +2196,7 @@ public class GameBattleActivity extends AppCompatActivity {
         }
         try {
             JSONObject callParams = new JSONObject();
-            callParams.put("from", myAddress);
+            callParams.put("from", ethCallFromAddress());
             callParams.put("to", roomAddress);
             callParams.put("data", ABIUtils.encodePlayerData(player));
             callParams.put("value", "0x0");
@@ -2258,7 +2324,8 @@ public class GameBattleActivity extends AppCompatActivity {
                 || text.startsWith("[RECEIPT]")
                 || text.startsWith("[RECEIPT] 已从")
                 || text.startsWith("========== 链上分配（推断）")
-                || text.startsWith("Vault gamePools");
+                || text.startsWith("Vault gamePools")
+                || text.startsWith(LOG_PREFIX_PLAYERS);
     }
 
     private String getCurrentWalletAddress() {

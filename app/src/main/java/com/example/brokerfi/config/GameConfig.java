@@ -15,13 +15,12 @@ public class GameConfig {
      * ECVRF 中继合约地址（{@code ECVRFRelay}）。全 0 表示不启用（房间用区块时间戳同步发牌）。
      * 非 0 时满员后发 {@code ECVRFRandomRequested}，链下对 abi.encode(gameId, room) Prove 后由 relayer 调 {@code submitRandomWord}。
      */
-    public static final String ECVRF_RELAY_ADDRESS = "0x98217a1e7D1D00a2B8B5e18358D2061aF5ede3a8";
+    public static final String ECVRF_RELAY_ADDRESS = "0x023B27D2edA8F0B2CDb1C9d5e8172f75fCc7b81F";
     //public static final String ECVRF_RELAY_ADDRESS = "0x0000000000000000000000000000000000000000";
 
     /**
      * 若为 true：游戏「写交易」走与首页转账/NFT 相同的 BrokerChain HTTPS 网关（ECDSA + {@code eth_sendTransaction}），
      * 使用当前选中账户私钥，链上 from 与钱包一致。需保证下方合约地址部署在网关所连链上。
-     * 仅连本地 RPC、合约未部署在官方链时，请保持 false。
      */
     public static final boolean USE_HTTP_GATEWAY_FOR_GAME_TX = true;
 
